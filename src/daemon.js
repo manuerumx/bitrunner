@@ -1,0 +1,120 @@
+import { log, tlog, formatMoney, formatRAM } from "/src/lib/utils.js";
+import { scanNetwork } from "/src/lib/scanner.js";
+
+const MANAGERS = [
+  { script: "/src/managers/hack-coordinator.js", name: "Hack Coordinator", priority: 1, phase: 1 },
+  { script: "/src/managers/rooter.js", name: "Rooter", priority: 2, phase: 1 },
+  { script: "/src/managers/server-buyer.js", name: "Server Buyer", priority: 3, phase: 2 },
+  { script: "/src/managers/hacknet-manager.js", name: "Hacknet Manager", priority: 4, phase: 2 },
+  { script: "/src/managers/contract-solver.js", name: "Contract Solver", priority: 5, phase: 3 },
+  { script: "/src/advanced/stock-trader.js", name: "Stock Trader", priority: 6, phase: 4 },
+  { script: "/src/advanced/faction-manager.js", name: "Faction Manager", priority: 7, phase: 5 },
+  { script: "/src/advanced/gang-manager.js", name: "Gang Manager", priority: 8, phase: 6 },
+  { script: "/src/advanced/sleeve-manager.js", name: "Sleeve Manager", priority: 9, phase: 6 },
+  { script: "/src/advanced/bladeburner-manager.js", name: "Bladeburner", priority: 10, phase: 6 },
+  { script: "/src/advanced/corp-manager.js", name: "Corporation", priority: 11, phase: 6 },
+];
+
+function getScriptRAM(ns, script) {
+  const ram = ns.getScriptRam(script);
+  return ram > 0 ? ram : Infinity;
+}
+
+function isRunning(ns, script) {
+  return ns.isRunning(script, "home");
+}
+
+function launchManager(ns, manager) {
+  if (isRunning(ns, manager.script)) return true;
+
+  const ram = getScriptRAM(ns, manager.script);
+  if (ram === Infinity) return false;
+
+  const freeRAM = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+  if (freeRAM < ram) return false;
+
+  const pid = ns.run(manager.script);
+  if (pid > 0) {
+    log(ns, `Launched ${manager.name} (${ram.toFixed(1)} GB)`);
+    return true;
+  }
+  return false;
+}
+
+function getNetworkStats(ns) {
+  const hostnames = scanNetwork(ns);
+  let rootedCount = 0;
+  let totalRAM = 0;
+  let usedRAM = 0;
+
+  for (const hostname of hostnames) {
+    if (ns.hasRootAccess(hostname)) {
+      rootedCount++;
+      totalRAM += ns.getServerMaxRam(hostname);
+      usedRAM += ns.getServerUsedRam(hostname);
+    }
+  }
+
+  return {
+    totalServers: hostnames.length,
+    rootedCount,
+    totalRAM,
+    usedRAM,
+    purchasedServers: ns.cloud.getServerNames().length,
+    hacknetNodes: ns.hacknet.numNodes(),
+  };
+}
+
+/** @param {NS} ns */
+export async function main(ns) {
+  ns.disableLog("ALL");
+  ns.ui.openTail();
+
+  tlog(ns, "=== BITRUNNER DAEMON STARTING ===");
+
+  const homeRAM = ns.getServerMaxRam("home");
+  tlog(ns, `Home RAM: ${formatRAM(homeRAM)}`);
+  tlog(ns, `Player Money: ${formatMoney(ns.getPlayer().money)}`);
+  tlog(ns, `Hacking Level: ${ns.getHackingLevel()}`);
+
+  const sortedManagers = [...MANAGERS].sort((a, b) => a.priority - b.priority);
+
+  while (true) {
+    for (const manager of sortedManagers) {
+      if (!ns.fileExists(manager.script)) continue;
+      if (!isRunning(ns, manager.script)) {
+        launchManager(ns, manager);
+      }
+    }
+
+    const money = ns.getPlayer().money;
+    const hackLevel = ns.getHackingLevel();
+    const freeRAM = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
+    const net = getNetworkStats(ns);
+
+    ns.clearLog();
+    ns.print("╔══════════════════════════════════╗");
+    ns.print("║       BITRUNNER DAEMON           ║");
+    ns.print("╚══════════════════════════════════╝");
+    ns.print(`  Money:   ${formatMoney(money)}`);
+    ns.print(`  Hacking: ${hackLevel}`);
+    ns.print(`  Home:    ${formatRAM(freeRAM)} free / ${formatRAM(homeRAM)}`);
+    ns.print("");
+    ns.print(`── Network ──`);
+    ns.print(`  Servers: ${net.rootedCount}/${net.totalServers} rooted`);
+    ns.print(`  Botnet:  ${formatRAM(net.usedRAM)} / ${formatRAM(net.totalRAM)} used`);
+    ns.print(`  Purchased: ${net.purchasedServers}/25 | Hacknet: ${net.hacknetNodes}`);
+    ns.print("");
+    ns.print(`── Managers ──`);
+    for (const manager of sortedManagers) {
+      const status = !ns.fileExists(manager.script)
+        ? "·"
+        : isRunning(ns, manager.script)
+          ? "▶ RUNNING"
+          : `■ STOPPED (${getScriptRAM(ns, manager.script).toFixed(1)} GB)`;
+      ns.print(`  ${manager.name}: ${status}`);
+    }
+
+    await ns.sleep(5000);
+  }
+}
