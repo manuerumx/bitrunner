@@ -31,53 +31,56 @@ function getBestAction(ns) {
     const reqRank = ns.bladeburner.getBlackOpRank(op);
     if (rank < reqRank) continue;
 
-    const count = ns.bladeburner.getActionCountRemaining("BlackOp", op);
+    const count = ns.bladeburner.getActionCountRemaining("Black Operations", op);
     if (count <= 0) continue;
 
-    const [minChance, maxChance] = ns.bladeburner.getActionEstimatedSuccessChance("BlackOp", op);
-    if (minChance >= 0.8) return { type: "BlackOp", name: op };
+    const [minChance, maxChance] = ns.bladeburner.getActionEstimatedSuccessChance("Black Operations", op);
+    if (minChance >= 0.8) return { type: "Black Operations", name: op };
   }
 
   const operations = ns.bladeburner.getOperationNames();
   let bestOp = null, bestOpChance = 0;
   for (const op of operations) {
-    const count = ns.bladeburner.getActionCountRemaining("Operation", op);
+    const count = ns.bladeburner.getActionCountRemaining("Operations", op);
     if (count <= 0) continue;
-    const [minChance] = ns.bladeburner.getActionEstimatedSuccessChance("Operation", op);
+    const [minChance] = ns.bladeburner.getActionEstimatedSuccessChance("Operations", op);
     if (minChance > bestOpChance) {
       bestOpChance = minChance;
       bestOp = op;
     }
   }
-  if (bestOp && bestOpChance >= 0.7) return { type: "Operation", name: bestOp };
+  if (bestOp && bestOpChance >= 0.7) return { type: "Operations", name: bestOp };
 
   const contracts = ns.bladeburner.getContractNames();
   let bestContract = null, bestContractChance = 0;
   for (const contract of contracts) {
-    const count = ns.bladeburner.getActionCountRemaining("Contract", contract);
+    const count = ns.bladeburner.getActionCountRemaining("Contracts", contract);
     if (count <= 0) continue;
-    const [minChance] = ns.bladeburner.getActionEstimatedSuccessChance("Contract", contract);
+    const [minChance] = ns.bladeburner.getActionEstimatedSuccessChance("Contracts", contract);
     if (minChance > bestContractChance) {
       bestContractChance = minChance;
       bestContract = contract;
     }
   }
-  if (bestContract && bestContractChance >= 0.6) return { type: "Contract", name: bestContract };
+  if (bestContract && bestContractChance >= 0.6) return { type: "Contracts", name: bestContract };
 
   return { type: "General", name: "Training" };
 }
 
 function upgradeSkills(ns) {
   const skills = ns.bladeburner.getSkillNames();
-  const money = ns.bladeburner.getSkillPoints();
+  let points = ns.bladeburner.getSkillPoints();
 
   const priorities = ["Blade's Intuition", "Cloak", "Short-Circuit", "Digital Observer", "Overclock"];
 
+  // Buy one level of each priority skill we can afford, in order, decrementing
+  // the available skill points as we go. Skill points are small integers, so the
+  // old `cost <= points * 0.3` reserve blocked nearly every upgrade.
   for (const skill of priorities) {
     if (!skills.includes(skill)) continue;
     const cost = ns.bladeburner.getSkillUpgradeCost(skill);
-    if (cost <= money * 0.3) {
-      ns.bladeburner.upgradeSkill(skill);
+    if (cost > 0 && cost <= points && ns.bladeburner.upgradeSkill(skill)) {
+      points -= cost;
     }
   }
 }

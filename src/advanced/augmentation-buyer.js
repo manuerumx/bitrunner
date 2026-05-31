@@ -84,15 +84,23 @@ export async function main(ns) {
   tlog(ns, `Player money: ${formatMoney(ns.getPlayer().money)}`);
   tlog(ns, "");
 
+  // Each purchase multiplies the price of all REMAINING augs by 1.9x. Augs are
+  // sorted most-expensive-first (correct order to maximize count), so we compound
+  // the multiplier as we go — otherwise the estimate is wildly over-optimistic and
+  // the later (cheaper) augs fail to purchase at runtime.
+  const AUG_PRICE_MULT = 1.9;
   let simulatedMoney = ns.getPlayer().money;
+  let priceMult = 1;
   for (const aug of augs) {
-    if (aug.price <= simulatedMoney) {
+    const realPrice = aug.price * priceMult;
+    if (realPrice <= simulatedMoney) {
       affordable.push(aug);
-      tlog(ns, `  [CAN BUY] ${aug.name} from ${aug.faction} - ${formatMoney(aug.price)}`);
-      simulatedMoney -= aug.price;
-      totalCost += aug.price;
+      tlog(ns, `  [CAN BUY] ${aug.name} from ${aug.faction} - ${formatMoney(realPrice)}`);
+      simulatedMoney -= realPrice;
+      totalCost += realPrice;
+      priceMult *= AUG_PRICE_MULT;
     } else {
-      tlog(ns, `  [NEED $]  ${aug.name} from ${aug.faction} - ${formatMoney(aug.price)}`);
+      tlog(ns, `  [NEED $]  ${aug.name} from ${aug.faction} - ${formatMoney(realPrice)}`);
     }
   }
 

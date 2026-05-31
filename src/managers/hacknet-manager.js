@@ -1,30 +1,41 @@
 import { DEFAULTS } from "/src/lib/constants.js";
 import { log, formatMoney } from "/src/lib/utils.js";
 
+// Relative production of a node given its stats. The constant gain-per-level (1.5)
+// and the player/BitNode multipliers scale every candidate equally, so they cancel
+// when ranking by payback ratio and are omitted here.
+function nodeProduction(level, ram, cores) {
+  return level * Math.pow(1.035, ram - 1) * ((cores + 5) / 6);
+}
+
+// Pick the upgrade with the lowest payback time (cost / production gained), NOT the
+// cheapest one — the cheapest upgrade is almost never the best return on investment.
 function getBestUpgrade(ns) {
   const numNodes = ns.hacknet.numNodes();
   let best = null;
 
+  const consider = (cand) => {
+    if (!isFinite(cand.cost) || cand.cost <= 0) return;
+    if (!isFinite(cand.payback) || cand.payback <= 0) return;
+    if (!best || cand.payback < best.payback) best = cand;
+  };
+
+  // A fresh node produces at base stats (level 1, ram 1, core 1).
   const newNodeCost = ns.hacknet.getPurchaseNodeCost();
-  if (isFinite(newNodeCost) && newNodeCost > 0) {
-    best = { type: "new", cost: newNodeCost, node: -1 };
-  }
+  consider({ type: "new", cost: newNodeCost, node: -1, payback: newNodeCost / nodeProduction(1, 1, 1) });
 
   for (let i = 0; i < numNodes; i++) {
-    const stats = ns.hacknet.getNodeStats(i);
+    const s = ns.hacknet.getNodeStats(i);
+    const base = nodeProduction(s.level, s.ram, s.cores);
 
-    const upgrades = [
-      { type: "level", cost: ns.hacknet.getLevelUpgradeCost(i, 1), node: i },
-      { type: "ram", cost: ns.hacknet.getRamUpgradeCost(i, 1), node: i },
-      { type: "core", cost: ns.hacknet.getCoreUpgradeCost(i, 1), node: i },
-    ];
+    const levelCost = ns.hacknet.getLevelUpgradeCost(i, 1);
+    consider({ type: "level", cost: levelCost, node: i, payback: levelCost / (nodeProduction(s.level + 1, s.ram, s.cores) - base) });
 
-    for (const upgrade of upgrades) {
-      if (!isFinite(upgrade.cost) || upgrade.cost <= 0) continue;
-      if (!best || upgrade.cost < best.cost) {
-        best = upgrade;
-      }
-    }
+    const ramCost = ns.hacknet.getRamUpgradeCost(i, 1); // one level doubles RAM
+    consider({ type: "ram", cost: ramCost, node: i, payback: ramCost / (nodeProduction(s.level, s.ram * 2, s.cores) - base) });
+
+    const coreCost = ns.hacknet.getCoreUpgradeCost(i, 1);
+    consider({ type: "core", cost: coreCost, node: i, payback: coreCost / (nodeProduction(s.level, s.ram, s.cores + 1) - base) });
   }
 
   return best;

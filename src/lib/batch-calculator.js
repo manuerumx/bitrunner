@@ -50,11 +50,18 @@ export function calculateBatch(ns, hostname, hackPercent = DEFAULTS.hackPercent)
   const weakenTime = ns.getWeakenTime(hostname);
   const spacing = DEFAULTS.batchSpacingMs;
 
+  // HWGW landing order must be hack → weaken1 → grow → weaken2, each separated
+  // by `spacing`. Landing time = delay + opTime, so we solve for each delay:
+  //   hack lands at   weakenTime - spacing
+  //   weaken1 lands at weakenTime
+  //   grow lands at    weakenTime + spacing
+  //   weaken2 lands at weakenTime + 2*spacing
+  // weaken2 MUST land after grow so it cancels grow's security increase.
   const timings = {
-    hackDelay: weakenTime - hackTime,
+    hackDelay: weakenTime - hackTime - spacing,
     weaken1Delay: 0,
-    growDelay: weakenTime - growTime + spacing * 2,
-    weaken2Delay: spacing,
+    growDelay: weakenTime - growTime + spacing,
+    weaken2Delay: spacing * 2,
   };
 
   const totalThreads = hackThreads + weakenAfterHackThreads + growThreads + weakenAfterGrowThreads;

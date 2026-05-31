@@ -1,5 +1,5 @@
 import { scanNetwork } from "/src/lib/scanner.js";
-import { PROGRAMS, WORKER_SCRIPTS } from "/src/lib/constants.js";
+import { DEFAULTS, PROGRAMS, WORKER_SCRIPTS } from "/src/lib/constants.js";
 import { log, formatMoney } from "/src/lib/utils.js";
 
 function getAvailablePrograms(ns) {
@@ -26,7 +26,8 @@ function deployWorkers(ns, hostname) {
 /** @param {NS} ns */
 export async function main(ns) {
   ns.disableLog("ALL");
-  const cycleMs = 30000;
+  const cycleMs = DEFAULTS.rooterCycleMs;
+  const deployed = new Set(); // hosts we've already scp'd workers to
 
   while (true) {
     const programs = getAvailablePrograms(ns);
@@ -34,24 +35,28 @@ export async function main(ns) {
 
     for (const hostname of hostnames) {
       if (ns.hasRootAccess(hostname)) {
-        deployWorkers(ns, hostname);
+        // Only copy workers once per host — re-scp'ing every host every cycle is wasteful.
+        if (!deployed.has(hostname)) {
+          deployWorkers(ns, hostname);
+          deployed.add(hostname);
+        }
         continue;
       }
 
-      const server = ns.getServer(hostname);
-      if (server.requiredHackingSkill > ns.getHackingLevel()) continue;
+      // Rooting only needs the port programs — NOT a sufficient hacking level
+      // (that only gates ns.hack). Root now to claim the RAM for grow/weaken workers.
+      const portsRequired = ns.getServerNumPortsRequired(hostname);
+      if (programs.length < portsRequired) continue;
 
       openPorts(ns, hostname, programs);
 
-      const updatedServer = ns.getServer(hostname);
-      if (updatedServer.openPortCount >= updatedServer.numOpenPortsRequired) {
-        try {
-          ns.nuke(hostname);
-          log(ns, `ROOTED: ${hostname} (${updatedServer.maxRam} GB RAM, ${formatMoney(updatedServer.moneyMax)} max)`);
-          deployWorkers(ns, hostname);
-        } catch {
-          // nuke failed, skip
-        }
+      try {
+        ns.nuke(hostname);
+        log(ns, `ROOTED: ${hostname} (${ns.getServerMaxRam(hostname)} GB RAM, ${formatMoney(ns.getServerMaxMoney(hostname))} max)`);
+        deployWorkers(ns, hostname);
+        deployed.add(hostname);
+      } catch {
+        // nuke failed (ports not all open yet), retry next cycle
       }
     }
 

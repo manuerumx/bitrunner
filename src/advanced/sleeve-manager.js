@@ -24,7 +24,7 @@ function getSleeveTask(ns, sleeveNum, totalSleeves) {
   }
 
   if (sleeveNum === 1) {
-    return { type: "gym", stat: "strength" };
+    return { type: "gym", stat: "str" };
   }
 
   if (sleeveNum === 2) {

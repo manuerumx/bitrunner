@@ -28,20 +28,22 @@ export async function main(ns) {
         }
       }
     } else {
-      const servers = owned
-        .map((h) => ({ hostname: h, ram: ns.getServerMaxRam(h) }))
-        .sort((a, b) => a.ram - b.ram);
+      // At the server cap: keep upgrading the smallest server while we can afford it
+      // (always keeping ~half our cash in reserve), instead of one upgrade per cycle.
+      let remaining = money;
+      while (true) {
+        const smallest = owned
+          .map((h) => ({ hostname: h, ram: ns.getServerMaxRam(h) }))
+          .sort((a, b) => a.ram - b.ram)[0];
+        if (!smallest || smallest.ram >= DEFAULTS.maxPurchasedServerRAM) break;
 
-      const smallest = servers[0];
-      if (smallest && smallest.ram < DEFAULTS.maxPurchasedServerRAM) {
         const newRAM = smallest.ram * 2;
         const cost = ns.cloud.getServerUpgradeCost(smallest.hostname, newRAM);
+        if (!(cost > 0) || cost >= remaining / 2) break;
+        if (!ns.cloud.upgradeServer(smallest.hostname, newRAM)) break;
 
-        if (cost < money / 2 && cost > 0) {
-          if (ns.cloud.upgradeServer(smallest.hostname, newRAM)) {
-            log(ns, `UPGRADED: ${smallest.hostname} ${formatRAM(smallest.ram)} -> ${formatRAM(newRAM)}`);
-          }
-        }
+        remaining -= cost;
+        log(ns, `UPGRADED: ${smallest.hostname} ${formatRAM(smallest.ram)} -> ${formatRAM(newRAM)}`);
       }
     }
 
