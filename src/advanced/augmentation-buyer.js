@@ -134,7 +134,7 @@ export async function main(ns) {
       ns.singularity.installAugmentations("src/daemon.js");
     }
   } else if (!installNow) {
-    tlog(ns, "\nDry run. Use 'run advanced/augmentation-buyer.js install' to purchase.");
-    tlog(ns, "Use 'run advanced/augmentation-buyer.js install reset' to purchase and reset.");
+    tlog(ns, "\nDry run. Use 'run src/advanced/augmentation-buyer.js install' to purchase.");
+    tlog(ns, "Use 'run src/advanced/augmentation-buyer.js install reset' to purchase and reset.");
   }
 }

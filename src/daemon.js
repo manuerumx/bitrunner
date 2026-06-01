@@ -78,12 +78,41 @@ export async function main(ns) {
   tlog(ns, `Hacking Level: ${ns.getHackingLevel()}`);
 
   const sortedManagers = [...MANAGERS].sort((a, b) => a.priority - b.priority);
+  const launchedLastCycle = new Set(); // managers ns.run() last cycle, awaiting confirmation they stayed up
+  const locked = new Set();            // managers that exited immediately (API/feature unavailable) — stop relaunching
+  const RELOCK_RETRY_CYCLES = 60;      // ~5 min at 5s/cycle: re-probe locked managers in case a feature got unlocked
+  let cycle = 0;
 
   while (true) {
+    // Periodically forget the locks so newly-unlocked subsystems (SF gained, gang/corp created,
+    // Bladeburner joined) get re-probed and started automatically. The re-probe is silent — the
+    // managers log "API required" to their own tail, not the terminal.
+    if (++cycle % RELOCK_RETRY_CYCLES === 0) locked.clear();
+
     for (const manager of sortedManagers) {
       if (!ns.fileExists(manager.script)) continue;
-      if (!isRunning(ns, manager.script)) {
-        launchManager(ns, manager);
+
+      // Already up (including started manually): keep managing it, and clear any stale lock.
+      if (isRunning(ns, manager.script)) {
+        launchedLastCycle.delete(manager.script);
+        locked.delete(manager.script);
+        continue;
+      }
+
+      // Known-unavailable (missing Source File / feature): don't relaunch. This is what
+      // spammed the terminal with "API required" every cycle.
+      if (locked.has(manager.script)) continue;
+
+      // We launched it last cycle but it's already gone → it exited immediately. Lock it until
+      // the feature is unlocked (then started manually once) or the daemon is restarted.
+      if (launchedLastCycle.has(manager.script)) {
+        launchedLastCycle.delete(manager.script);
+        locked.add(manager.script);
+        continue;
+      }
+
+      if (launchManager(ns, manager)) {
+        launchedLastCycle.add(manager.script);
       }
     }
 
@@ -111,7 +140,9 @@ export async function main(ns) {
         ? "·"
         : isRunning(ns, manager.script)
           ? "▶ RUNNING"
-          : `■ STOPPED (${getScriptRAM(ns, manager.script).toFixed(1)} GB)`;
+          : locked.has(manager.script)
+            ? "🔒 LOCKED"
+            : `■ STOPPED (${getScriptRAM(ns, manager.script).toFixed(1)} GB)`;
       ns.print(`  ${manager.name}: ${status}`);
     }
 

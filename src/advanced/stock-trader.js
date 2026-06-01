@@ -68,12 +68,12 @@ export async function main(ns) {
   ns.disableLog("ALL");
 
   if (!hasTIX(ns)) {
-    ns.tprint("ERROR: TIX API access required. Purchase from World Stock Exchange.");
+    ns.print("ERROR: TIX API access required. Purchase from World Stock Exchange.");
     return;
   }
 
   const use4S = has4SData(ns);
-  const useShorts = hasShortAccess(ns);
+  let useShorts = hasShortAccess(ns);
 
   if (!use4S) {
     ns.tprint("WARN: No 4S Market Data. Trading will be limited.");
@@ -117,11 +117,11 @@ export async function main(ns) {
         }
 
         if (forecast > FORECAST_BUY_THRESHOLD && longShares === 0) {
-          const affordable = Math.floor(budget / ns.stock.getAskPrice(sym));
+          const affordable = Math.floor((budget - COMMISSION) / ns.stock.getAskPrice(sym));
           const shares = Math.min(affordable, maxShares - longShares);
           if (shares > 0) {
             const cost = ns.stock.getPurchaseCost(sym, shares, "L");
-            if (cost < budget && cost > 0) {
+            if (cost <= budget && cost > 0) {
               const price = ns.stock.buyStock(sym, shares);
               if (price > 0) {
                 log(ns, `BUY LONG ${sym}: ${shares} shares @ ${formatMoney(price)} (forecast: ${(forecast * 100).toFixed(1)}%)`);
@@ -131,14 +131,21 @@ export async function main(ns) {
         }
 
         if (useShorts && forecast < 1 - FORECAST_BUY_THRESHOLD && shortShares === 0) {
-          const affordable = Math.floor(budget / ns.stock.getBidPrice(sym));
+          const affordable = Math.floor((budget - COMMISSION) / ns.stock.getBidPrice(sym));
           const shares = Math.min(affordable, maxShares - shortShares);
           if (shares > 0) {
             const cost = ns.stock.getPurchaseCost(sym, shares, "S");
-            if (cost < budget && cost > 0) {
-              const price = ns.stock.shortStock(sym, shares);
-              if (price > 0) {
-                log(ns, `BUY SHORT ${sym}: ${shares} shares @ ${formatMoney(price)} (forecast: ${(forecast * 100).toFixed(1)}%)`);
+            if (cost <= budget && cost > 0) {
+              try {
+                const price = ns.stock.buyShort(sym, shares);
+                if (price > 0) {
+                  log(ns, `BUY SHORT ${sym}: ${shares} shares @ ${formatMoney(price)} (forecast: ${(forecast * 100).toFixed(1)}%)`);
+                }
+              } catch {
+                // Shorting needs BitNode-8 or SF-8 lvl 2. hasShortAccess() can't detect this
+                // (getPosition works with plain TIX), so disable shorts on the first rejection.
+                useShorts = false;
+                log(ns, "Short selling unavailable (needs BitNode-8 / SF-8.2) — disabling shorts");
               }
             }
           }

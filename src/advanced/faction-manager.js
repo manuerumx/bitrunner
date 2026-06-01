@@ -73,7 +73,7 @@ export async function main(ns) {
   ns.disableLog("ALL");
 
   if (!hasSingularity(ns)) {
-    ns.tprint("ERROR: Singularity API required (Source-File 4)");
+    ns.print("ERROR: Singularity API required (Source-File 4)");
     return;
   }
 

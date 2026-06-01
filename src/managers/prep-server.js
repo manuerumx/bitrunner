@@ -31,7 +31,7 @@ export async function main(ns) {
   const target = ns.args[0];
 
   if (!target) {
-    ns.tprint("Usage: run managers/prep-server.js <target>");
+    ns.tprint("Usage: run src/managers/prep-server.js <target>");
     return;
   }
 

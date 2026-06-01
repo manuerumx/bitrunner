@@ -40,6 +40,25 @@ function sellAllStocks(ns) {
   return totalGain;
 }
 
+// Report open positions and their current liquidation value WITHOUT selling.
+function getStockSummary(ns) {
+  if (!hasTIX(ns)) return null;
+  let positions = 0;
+  let liquidationValue = 0;
+  for (const sym of ns.stock.getSymbols()) {
+    const [longShares, , shortShares] = ns.stock.getPosition(sym);
+    if (longShares > 0) {
+      positions++;
+      liquidationValue += ns.stock.getSaleGain(sym, longShares, "L");
+    }
+    if (shortShares > 0) {
+      positions++;
+      try { liquidationValue += ns.stock.getSaleGain(sym, shortShares, "S"); } catch {}
+    }
+  }
+  return { positions, liquidationValue };
+}
+
 /** @param {NS} ns */
 export async function main(ns) {
   if (!hasSingularity(ns)) {
@@ -49,9 +68,17 @@ export async function main(ns) {
 
   tlog(ns, "\n=== PRE-RESET CHECKLIST ===\n");
 
-  tlog(ns, "1. Selling all stocks...");
-  const stockGain = sellAllStocks(ns);
-  tlog(ns, `   Gained: ${formatMoney(stockGain)}`);
+  tlog(ns, "1. Stock positions:");
+  const stocks = getStockSummary(ns);
+  if (!stocks) {
+    tlog(ns, "   No TIX access — nothing to sell.");
+  } else if (stocks.positions === 0) {
+    tlog(ns, "   Flat — no open positions.");
+  } else {
+    tlog(ns, `   ${stocks.positions} open position(s), ~${formatMoney(stocks.liquidationValue)} if sold now.`);
+    tlog(ns, "   -> Cash out at a profit first:  run src/tools/sell-stocks.js");
+    tlog(ns, "      (or dump immediately:         run src/tools/sell-stocks.js now)");
+  }
 
   tlog(ns, "\n2. Current augmentation status:");
   const owned = ns.singularity.getOwnedAugmentations(true);
@@ -78,15 +105,19 @@ export async function main(ns) {
 
   if (pending > 0) {
     tlog(ns, `\n${pending} augmentations pending install.`);
-    tlog(ns, "Run 'run advanced/augmentation-buyer.js install reset' to purchase more and reset.");
+    tlog(ns, "Run 'run src/advanced/augmentation-buyer.js install reset' to purchase more and reset.");
   } else {
     tlog(ns, "\nNo pending augmentations. Run augmentation-buyer first.");
   }
 
   if (ns.args[0] === "go") {
+    // Safety net: dump any positions still open before the reset wipes them. If you already
+    // ran sell-stocks.js to exit at a profit, this usually sells nothing.
+    const dumped = sellAllStocks(ns);
+    if (dumped > 0) tlog(ns, `\nForce-sold remaining positions for ~${formatMoney(dumped)} (gross).`);
     tlog(ns, "\nInstalling augmentations and resetting...");
     ns.singularity.installAugmentations("src/daemon.js");
   } else {
-    tlog(ns, "\nUse 'run tools/reset-prep.js go' to install augs and reset.");
+    tlog(ns, "\nUse 'run src/tools/reset-prep.js go' to install augs and reset.");
   }
 }

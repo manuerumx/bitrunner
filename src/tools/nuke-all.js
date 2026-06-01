@@ -32,5 +32,5 @@ export async function main(ns) {
     }
   }
 
-  tlog(ns, `Done: ${rooted} newly rooted, ${alreadyRooted} already had root, ${hostnames.length - rooted - alreadyRooted} unreachable`);
+  tlog(ns, `Done: ${rooted} newly rooted, ${alreadyRooted} already had root, ${hostnames.length - rooted - alreadyRooted} not yet rootable`);
 }

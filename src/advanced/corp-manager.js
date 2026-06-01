@@ -115,7 +115,7 @@ export async function main(ns) {
   ns.disableLog("ALL");
 
   if (!hasCorpAPI(ns)) {
-    ns.tprint("ERROR: Corporation API required (Source-File 3 or BitNode 3)");
+    ns.print("ERROR: Corporation API required (Source-File 3 or BitNode 3)");
     return;
   }
 

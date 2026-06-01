@@ -90,7 +90,7 @@ export async function main(ns) {
   ns.disableLog("ALL");
 
   if (!hasBladeburnerAPI(ns)) {
-    ns.tprint("ERROR: Bladeburner API required (Source-File 6 or 7)");
+    ns.print("ERROR: Bladeburner API required (Source-File 6 or 7)");
     return;
   }
 

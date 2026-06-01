@@ -75,7 +75,7 @@ export async function main(ns) {
   ns.disableLog("ALL");
 
   if (!hasGangAPI(ns)) {
-    ns.tprint("ERROR: Gang API required (Source-File 2 or BitNode 2). Must create gang first.");
+    ns.print("ERROR: Gang API required (Source-File 2 or BitNode 2). Must create gang first.");
     return;
   }
 

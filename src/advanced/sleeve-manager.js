@@ -39,7 +39,7 @@ export async function main(ns) {
   ns.disableLog("ALL");
 
   if (!hasSleeveAPI(ns)) {
-    ns.tprint("ERROR: Sleeve API required (Source-File 10)");
+    ns.print("ERROR: Sleeve API required (Source-File 10)");
     return;
   }
 

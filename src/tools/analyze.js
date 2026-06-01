@@ -6,7 +6,7 @@ import { formatMoney, formatRAM, formatTime, formatPercent } from "/src/lib/util
 export async function main(ns) {
   const target = ns.args[0];
   if (!target) {
-    ns.tprint("Usage: run tools/analyze.js <hostname>");
+    ns.tprint("Usage: run src/tools/analyze.js <hostname>");
     return;
   }
 
