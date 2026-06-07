@@ -37,11 +37,22 @@ not "fixed" by mistake).
 >   of idling once the top faction is maxed. **F‑48** — corp‑manager now calls
 >   `acceptInvestmentOffer` for material early rounds instead of only logging them.
 >
-> All 10 touched files pass `node --check`. Verify in‑game with `ns.ps("n00dles")` (workers
-> spread) and the contract tail (no repeated FAILED). **Still open** (lower‑priority polish):
-> F‑5/F‑17a observability & scan caching, F‑29 contract grid guards, F‑39–F‑43 stock/faction
-> low‑sev items, F‑46/F‑49/F‑50 advanced‑manager NS‑call hoisting, F‑17/F‑18 share()/config.
-> The 3 refuted findings (§7) stay untouched.
+> - **Batch 5 — polish (efficiency/robustness/small correctness):** **F‑8** hoist repeated
+>   `getServerMaxMoney` in `calculateBatch`; **F‑9** clamp negative HWGW delays; **F‑19** drop
+>   dead `scanner.getAllServers`; **F‑29** guard the 3 grid solvers against empty matrices;
+>   **F‑25** hacknet buys multiple upgrades/cycle within budget; **F‑39** stock short value uses
+>   market price; **F‑40** drop dead `maxShares − shares` arithmetic; **F‑42** faction auto‑join
+>   respects mutually‑exclusive city factions; **F‑43** NeuroFlux loop drops the 100‑cap and
+>   hoists invariant lookups; **F‑46/F‑49** gang/bladeburner hoist per‑cycle NS calls out of
+>   loops; **F‑47** sleeve assignment falls back to crime instead of silently idling; **F‑50**
+>   corp hoists funds, drops dead constants, collision‑free product names.
+>
+> All touched files pass `node --check`. Verify in‑game with `ns.ps("n00dles")` (workers spread)
+> and the contract tail (no repeated FAILED). **Still open** (deliberately deferred — design
+> calls or very low value): F‑5 daemon stat throttle, F‑17a coordinator scan caching, F‑28
+> contract type caching, F‑24 server‑buyer micro‑opt, F‑35 analyze label, F‑36 reset‑prep
+> commission, and the strategy choices F‑17 `share()` and F‑18 `config` wiring/removal. The 3
+> refuted findings (§7) stay untouched.
 
 ---
 

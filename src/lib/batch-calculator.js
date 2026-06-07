@@ -33,13 +33,14 @@ export function calculatePrepThreads(ns, target) {
 }
 
 export function calculateBatch(ns, hostname, hackPercent = DEFAULTS.hackPercent) {
-  const hackThreads = Math.max(1, Math.floor(ns.hackAnalyzeThreads(hostname, ns.getServerMaxMoney(hostname) * hackPercent)));
+  const maxMoney = ns.getServerMaxMoney(hostname);
+  const hackThreads = Math.max(1, Math.floor(ns.hackAnalyzeThreads(hostname, maxMoney * hackPercent)));
 
   const hackSecurityIncrease = ns.hackAnalyzeSecurity(hackThreads, hostname);
   const weakenAfterHackThreads = Math.ceil(hackSecurityIncrease / ns.weakenAnalyze(1));
 
-  const moneyAfterHack = ns.getServerMaxMoney(hostname) * (1 - hackPercent);
-  const growthNeeded = moneyAfterHack > 0 ? ns.getServerMaxMoney(hostname) / moneyAfterHack : 100;
+  const moneyAfterHack = maxMoney * (1 - hackPercent);
+  const growthNeeded = moneyAfterHack > 0 ? maxMoney / moneyAfterHack : 100;
   const growThreads = Math.ceil(ns.growthAnalyze(hostname, growthNeeded));
 
   const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreads, hostname);
@@ -58,9 +59,11 @@ export function calculateBatch(ns, hostname, hackPercent = DEFAULTS.hackPercent)
   //   weaken2 lands at weakenTime + 2*spacing
   // weaken2 MUST land after grow so it cancels grow's security increase.
   const timings = {
-    hackDelay: weakenTime - hackTime - spacing,
+    // Clamp to >=0: workers treat delay<=0 as "no sleep", so a negative delay (possible if an
+    // op's time is unusually close to weakenTime) would otherwise land at the wrong moment.
+    hackDelay: Math.max(0, weakenTime - hackTime - spacing),
     weaken1Delay: 0,
-    growDelay: weakenTime - growTime + spacing,
+    growDelay: Math.max(0, weakenTime - growTime + spacing),
     weaken2Delay: spacing * 2,
   };
 

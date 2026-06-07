@@ -39,16 +39,18 @@ function buyNeuroFlux(ns) {
   const factions = ns.getPlayer().factions;
   let bought = 0;
 
-  for (let i = 0; i < 100; i++) {
+  // No fixed cap — NeuroFlux's price escalates each level, so the price-vs-money check below
+  // terminates the loop naturally once the next level is unaffordable.
+  while (true) {
+    const price = ns.singularity.getAugmentationPrice("NeuroFlux Governor");
+    if (price > ns.getPlayer().money) break;
+    // Rep requirement also rises per level, so recompute once per level (not per faction).
+    const repReq = ns.singularity.getAugmentationRepReq("NeuroFlux Governor");
+
     let purchased = false;
     for (const faction of factions) {
       try {
-        const price = ns.singularity.getAugmentationPrice("NeuroFlux Governor");
-        if (price > ns.getPlayer().money) break;
-
-        const repReq = ns.singularity.getAugmentationRepReq("NeuroFlux Governor");
         if (ns.singularity.getFactionRep(faction) < repReq) continue;
-
         if (ns.singularity.purchaseAugmentation(faction, "NeuroFlux Governor")) {
           bought++;
           purchased = true;

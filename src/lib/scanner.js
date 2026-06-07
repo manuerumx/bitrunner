@@ -36,11 +36,6 @@ export function getServerDetails(ns, hostname) {
   };
 }
 
-export function getAllServers(ns) {
-  const hostnames = scanNetwork(ns);
-  return hostnames.map((h) => getServerDetails(ns, h));
-}
-
 export function getPath(ns, target) {
   const visited = new Set(["home"]);
   const queue = [["home"]];

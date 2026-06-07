@@ -26,8 +26,8 @@ function getBestAction(ns) {
   if (chaos > 50) return { type: "General", name: "Diplomacy" };
 
   const blackOps = ns.bladeburner.getBlackOpNames();
+  const rank = ns.bladeburner.getRank();
   for (const op of blackOps) {
-    const rank = ns.bladeburner.getRank();
     const reqRank = ns.bladeburner.getBlackOpRank(op);
     if (rank < reqRank) continue;
 
@@ -100,9 +100,9 @@ export async function main(ns) {
     upgradeSkills(ns);
 
     const action = getBestAction(ns);
-    const [currentType, currentName] = ns.bladeburner.getCurrentAction()
-      ? [ns.bladeburner.getCurrentAction().type, ns.bladeburner.getCurrentAction().name]
-      : [null, null];
+    const current = ns.bladeburner.getCurrentAction();
+    const currentType = current ? current.type : null;
+    const currentName = current ? current.name : null;
 
     if (currentType !== action.type || currentName !== action.name) {
       ns.bladeburner.startAction(action.type, action.name);

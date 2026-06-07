@@ -51,22 +51,29 @@ export async function main(ns) {
       const task = getSleeveTask(ns, i, numSleeves);
 
       try {
+        let ok = true;
         switch (task.type) {
           case "recovery":
-            ns.sleeve.setToShockRecovery(i);
+            ok = ns.sleeve.setToShockRecovery(i);
             break;
           case "sync":
-            ns.sleeve.setToSynchronize(i);
+            ok = ns.sleeve.setToSynchronize(i);
             break;
           case "faction":
-            ns.sleeve.setToFactionWork(i, task.faction, task.workType);
+            ok = ns.sleeve.setToFactionWork(i, task.faction, task.workType);
             break;
           case "gym":
-            ns.sleeve.setToGymWorkout(i, "Powerhouse Gym", task.stat);
+            ok = ns.sleeve.setToGymWorkout(i, "Powerhouse Gym", task.stat);
             break;
           case "crime":
-            ns.sleeve.setToCommitCrime(i, task.crime);
+            ok = ns.sleeve.setToCommitCrime(i, task.crime);
             break;
+        }
+        if (ok === false) {
+          // Assignment was rejected (e.g. the faction doesn't offer that work type). Don't leave
+          // the sleeve idle — fall back to a crime, which is always available.
+          ns.sleeve.setToCommitCrime(i, "Mug");
+          log(ns, `Sleeve ${i}: ${task.type} rejected, fell back to crime`);
         }
       } catch {}
     }

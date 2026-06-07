@@ -22,6 +22,9 @@ const PRIORITY_AUGS = [
   "Neurotrainer III",
 ];
 
+// City factions are mutually exclusive — joining one permanently bars the others.
+const CITY_FACTIONS = ["Sector-12", "Aevum", "Volhaven", "Chongqing", "New Tokyo", "Ishima"];
+
 function hasSingularity(ns) {
   try {
     ns.singularity.getCurrentWork();
@@ -91,7 +94,14 @@ export async function main(ns) {
 
   while (true) {
     const invitations = ns.singularity.checkFactionInvitations();
+    let inCityFaction = getJoinedFactions(ns).some((f) => CITY_FACTIONS.includes(f));
     for (const faction of invitations) {
+      // Only auto-join a city faction if we're not already committed to one (they're mutually
+      // exclusive); claim the first, skip the rest, so we don't blindly forfeit augs.
+      if (CITY_FACTIONS.includes(faction)) {
+        if (inCityFaction) continue;
+        inCityFaction = true;
+      }
       ns.singularity.joinFaction(faction);
       log(ns, `Joined faction: ${faction}`);
     }

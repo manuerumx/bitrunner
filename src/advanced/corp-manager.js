@@ -2,8 +2,6 @@ import { log, formatMoney } from "/src/lib/utils.js";
 import { PORTS } from "/src/lib/constants.js";
 import { writePortData } from "/src/lib/port-registry.js";
 
-const INDUSTRIES = ["Agriculture", "Tobacco"];
-const CITIES = ["Aevum", "Chongqing", "Sector-12", "New Tokyo", "Ishima", "Volhaven"];
 const EMPLOYEE_ROLES = ["Operations", "Engineer", "Business", "Management", "Research & Development"];
 
 function hasCorpAPI(ns) {
@@ -17,6 +15,7 @@ function hasCorpAPI(ns) {
 
 function manageDivision(ns, divName) {
   const div = ns.corporation.getDivision(divName);
+  const funds = ns.corporation.getCorporation().funds;
 
   for (const city of div.cities) {
     const office = ns.corporation.getOffice(divName, city);
@@ -47,7 +46,7 @@ function manageDivision(ns, divName) {
         const warehouse = ns.corporation.getWarehouse(divName, city);
         if (warehouse.sizeUsed > warehouse.size * 0.9) {
           const upgradeCost = ns.corporation.getUpgradeWarehouseCost(divName, city);
-          if (upgradeCost < ns.corporation.getCorporation().funds * 0.1) {
+          if (upgradeCost < funds * 0.1) {
             ns.corporation.upgradeWarehouse(divName, city);
           }
         }
@@ -70,7 +69,12 @@ function manageDivision(ns, divName) {
 
     if (products.length < 3) {
       try {
-        const name = `${divName}-P${Date.now() % 10000}`;
+        // Pick the lowest unused index so product names never collide (the old Date.now()-based
+        // name could repeat within a tick, and makeProduct rejects duplicate names).
+        const used = new Set(products);
+        let idx = 0;
+        while (used.has(`${divName}-P${idx}`)) idx++;
+        const name = `${divName}-P${idx}`;
         ns.corporation.makeProduct(divName, div.cities[0], name, 1e9, 1e9);
         log(ns, `Corp: developing product ${name}`);
       } catch {}

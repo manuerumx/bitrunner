@@ -47,11 +47,15 @@ export async function main(ns) {
   const cycleMs = DEFAULTS.hacknetCycleMs;
 
   while (true) {
-    const money = ns.getPlayer().money;
-    const budget = money * DEFAULTS.hacknetBudgetPercent;
+    // Budget is 10% of cash at cycle start; buy successive best-payback upgrades within it so a
+    // fresh hacknet ramps fast instead of one upgrade per cycle.
+    const budget = ns.getPlayer().money * DEFAULTS.hacknetBudgetPercent;
+    let spent = 0;
 
-    const best = getBestUpgrade(ns);
-    if (best && best.cost <= budget) {
+    while (true) {
+      const best = getBestUpgrade(ns);
+      if (!best || spent + best.cost > budget) break;
+
       let success = false;
       switch (best.type) {
         case "new":
@@ -71,6 +75,8 @@ export async function main(ns) {
           if (success) log(ns, `Hacknet: upgraded node ${best.node} cores for ${formatMoney(best.cost)}`);
           break;
       }
+      if (!success) break;
+      spent += best.cost;
     }
 
     await ns.sleep(cycleMs);

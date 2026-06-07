@@ -20,11 +20,10 @@ function getMemberInfo(ns, name) {
   return { ...info, name, avgCombat };
 }
 
-function getBestTask(ns, member) {
+function getBestTask(ns, member, gangInfo) {
   if (member.avgCombat < 100) return "Train Combat";
   if (member.hack < 100) return "Train Hacking";
 
-  const gangInfo = ns.gang.getGangInformation();
   if (gangInfo.wantedPenalty < 0.9 && gangInfo.wantedLevel > 1) return "Vigilante Justice";
 
   if (member.avgCombat < 500) return "Mug People";
@@ -56,10 +55,7 @@ function tryAscend(ns, name) {
   return false;
 }
 
-function buyEquipment(ns, name) {
-  const equipment = ns.gang.getEquipmentNames();
-  const money = ns.getPlayer().money;
-
+function buyEquipment(ns, name, equipment, money) {
   for (const equip of equipment) {
     const cost = ns.gang.getEquipmentCost(equip);
     if (cost < money * 0.01) {
@@ -83,22 +79,25 @@ export async function main(ns) {
 
   while (true) {
     const gangInfo = ns.gang.getGangInformation();
-    const members = ns.gang.getMemberNames();
 
     tryRecruit(ns);
+
+    // Fetch the equipment catalog and cash once per cycle, not once per member.
+    const equipment = ns.gang.getEquipmentNames();
+    const money = ns.getPlayer().money;
 
     let totalIncome = 0;
     for (const name of ns.gang.getMemberNames()) {
       tryAscend(ns, name);
 
       const member = getMemberInfo(ns, name);
-      const task = getBestTask(ns, member);
+      const task = getBestTask(ns, member, gangInfo);
 
       if (member.task !== task) {
         ns.gang.setMemberTask(name, task);
       }
 
-      buyEquipment(ns, name);
+      buyEquipment(ns, name, equipment, money);
       totalIncome += member.moneyGain;
     }
 

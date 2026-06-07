@@ -53,10 +53,11 @@ function getPortfolio(ns) {
 
     if (shortShares > 0) {
       const price = ns.stock.getAskPrice(sym);
-      const value = shortShares * shortAvg - shortShares * price;
-      totalValue += shortShares * shortAvg;
-      totalProfit += value - COMMISSION;
-      positions.push({ sym, shares: shortShares, avg: shortAvg, type: "short", value: shortShares * shortAvg });
+      const marketValue = shortShares * price;
+      const profit = shortShares * (shortAvg - price);
+      totalValue += marketValue;
+      totalProfit += profit - COMMISSION;
+      positions.push({ sym, shares: shortShares, avg: shortAvg, type: "short", value: marketValue });
     }
   }
 
@@ -121,7 +122,7 @@ export async function main(ns) {
 
         if (forecast > FORECAST_BUY_THRESHOLD && longShares === 0) {
           const affordable = Math.floor((remaining - COMMISSION) / ns.stock.getAskPrice(sym));
-          const shares = Math.min(affordable, maxShares - longShares);
+          const shares = Math.min(affordable, maxShares);
           if (shares > 0) {
             const cost = ns.stock.getPurchaseCost(sym, shares, "L");
             if (cost <= remaining && cost > 0) {
@@ -136,7 +137,7 @@ export async function main(ns) {
 
         if (useShorts && forecast < 1 - FORECAST_BUY_THRESHOLD && shortShares === 0) {
           const affordable = Math.floor((remaining - COMMISSION) / ns.stock.getBidPrice(sym));
-          const shares = Math.min(affordable, maxShares - shortShares);
+          const shares = Math.min(affordable, maxShares);
           if (shares > 0) {
             const cost = ns.stock.getPurchaseCost(sym, shares, "S");
             if (cost <= remaining && cost > 0) {

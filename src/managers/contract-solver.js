@@ -47,7 +47,7 @@ const SOLVERS = {
 
   "Spiralize Matrix": (data) => {
     const result = [];
-    if (data.length === 0) return result;
+    if (data.length === 0 || data[0].length === 0) return result;
     let top = 0, bottom = data.length - 1, left = 0, right = data[0].length - 1;
     while (top <= bottom && left <= right) {
       for (let i = left; i <= right; i++) result.push(data[top][i]);
@@ -169,6 +169,7 @@ const SOLVERS = {
   },
 
   "Unique Paths in a Grid II": (data) => {
+    if (!data.length || !data[0].length) return 0;
     const rows = data.length, cols = data[0].length;
     const dp = new Array(cols).fill(0);
     dp[0] = 1;
@@ -457,6 +458,7 @@ const SOLVERS = {
   },
 
   "Shortest Path in a Grid": (data) => {
+    if (!data.length || !data[0].length) return "";
     const rows = data.length, cols = data[0].length;
     if (data[0][0] === 1 || data[rows - 1][cols - 1] === 1) return "";
     const dirs = [[0, 1, "R"], [0, -1, "L"], [1, 0, "D"], [-1, 0, "U"]];
