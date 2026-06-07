@@ -20,10 +20,6 @@ function getBestUpgrade(ns) {
     if (!best || cand.payback < best.payback) best = cand;
   };
 
-  // A fresh node produces at base stats (level 1, ram 1, core 1).
-  const newNodeCost = ns.hacknet.getPurchaseNodeCost();
-  consider({ type: "new", cost: newNodeCost, node: -1, payback: newNodeCost / nodeProduction(1, 1, 1) });
-
   for (let i = 0; i < numNodes; i++) {
     const s = ns.hacknet.getNodeStats(i);
     const base = nodeProduction(s.level, s.ram, s.cores);
@@ -47,21 +43,28 @@ export async function main(ns) {
   const cycleMs = DEFAULTS.hacknetCycleMs;
 
   while (true) {
-    // Budget is 10% of cash at cycle start; buy successive best-payback upgrades within it so a
-    // fresh hacknet ramps fast instead of one upgrade per cycle.
+    // Budget is 10% of cash at cycle start.
     const budget = ns.getPlayer().money * DEFAULTS.hacknetBudgetPercent;
     let spent = 0;
 
+    // Expand by one node per cycle when affordable. A fresh base-level node never wins the
+    // payback ranking below, so the upgrade loop alone never grows the node count — which is
+    // why nodes had to be bought by hand. Steady growth here + upgrades for the rest.
+    if (ns.hacknet.numNodes() < ns.hacknet.maxNumNodes()) {
+      const nodeCost = ns.hacknet.getPurchaseNodeCost();
+      if (nodeCost <= budget && ns.hacknet.purchaseNode() >= 0) {
+        spent += nodeCost;
+        log(ns, `Hacknet: purchased node #${ns.hacknet.numNodes() - 1} for ${formatMoney(nodeCost)}`);
+      }
+    }
+
+    // Spend the rest of the budget on the best-payback upgrades.
     while (true) {
       const best = getBestUpgrade(ns);
       if (!best || spent + best.cost > budget) break;
 
       let success = false;
       switch (best.type) {
-        case "new":
-          success = ns.hacknet.purchaseNode() >= 0;
-          if (success) log(ns, `Hacknet: purchased node #${ns.hacknet.numNodes() - 1} for ${formatMoney(best.cost)}`);
-          break;
         case "level":
           success = ns.hacknet.upgradeLevel(best.node, 1);
           if (success) log(ns, `Hacknet: upgraded node ${best.node} level for ${formatMoney(best.cost)}`);

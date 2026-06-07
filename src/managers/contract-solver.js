@@ -512,10 +512,11 @@ export async function main(ns) {
 
   while (true) {
     const hostnames = ["home", ...scanNetwork(ns)];
-    let solved = 0, failed = 0, skipped = 0;
+    let found = 0, solved = 0, failed = 0, skipped = 0;
 
     for (const hostname of hostnames) {
       const contracts = ns.ls(hostname, ".cct");
+      found += contracts.length;
       for (const contract of contracts) {
         const id = `${hostname}/${contract}`;
 
@@ -564,10 +565,10 @@ export async function main(ns) {
       }
     }
 
-    if (solved > 0 || failed > 0) {
-      log(ns, `Contracts: ${solved} solved, ${failed} failed, ${skipped} skipped`);
-    }
+    // Always log a heartbeat so the tail shows the solver is alive even when no contracts
+    // exist (previously it was silent unless one was solved or failed).
+    log(ns, `Contracts: ${found} found, ${solved} solved, ${failed} failed, ${skipped} skipped`);
 
-    await ns.sleep(300000);
+    await ns.sleep(60000);
   }
 }

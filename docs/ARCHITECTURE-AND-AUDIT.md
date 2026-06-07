@@ -47,12 +47,25 @@ not "fixed" by mistake).
 >   loops; **F‑47** sleeve assignment falls back to crime instead of silently idling; **F‑50**
 >   corp hoists funds, drops dead constants, collision‑free product names.
 >
-> All touched files pass `node --check`. Verify in‑game with `ns.ps("n00dles")` (workers spread)
-> and the contract tail (no repeated FAILED). **Still open** (deliberately deferred — design
-> calls or very low value): F‑5 daemon stat throttle, F‑17a coordinator scan caching, F‑28
-> contract type caching, F‑24 server‑buyer micro‑opt, F‑35 analyze label, F‑36 reset‑prep
-> commission, and the strategy choices F‑17 `share()` and F‑18 `config` wiring/removal. The 3
-> refuted findings (§7) stay untouched.
+> - **Batch 6 — live-tuning from runtime data (botnet was ~4% utilized: 138 TB / 3.5 PB):**
+>   The HWGW strategy simply can't consume a botnet that large, so most RAM (and most purchased
+>   servers) sat idle. Fixes: **target scaling** (cap 6→10) and **hackPercent 0.5→0.7** for more
+>   income demand; **`share()` Phase 4 (F‑17)** — the coordinator now mops up ALL leftover RAM
+>   into faction reputation while faction‑manager is grinding (killed at each cycle top and
+>   re‑filled so the income phases keep first claim; gated via the FACTION_STATUS port, no
+>   Singularity RAM added). `share.js` added to `WORKER_SCRIPTS` + deployed on demand. **Hacknet
+>   new‑node fix** — a fresh node never won the payback ranking, so the manager never grew the
+>   node count (user had to buy 21/25 by hand); it now buys one new node/cycle up to the cap.
+>   **Contract heartbeat (F‑28)** — logs `N found / solved / failed / skipped` every cycle (was
+>   silent unless something solved/failed) and the scan interval dropped 300s→60s.
+>
+> All touched files pass `node --check`. Verify in‑game: daemon "Botnet used%" should climb,
+> `ns.ps` on purchased servers should show `share.js`, hacknet should buy nodes, and the
+> contract tail should heartbeat each minute. **Note:** `share()` only runs while a faction is
+> being grinded (SF4 + faction‑manager). With no faction grind, surplus RAM is genuinely idle —
+> a botnet this large is far more than hacking alone needs. **Still open** (deferred): F‑5 daemon
+> stat throttle, F‑17a coordinator scan caching, F‑24 server‑buyer micro‑opt, F‑35 analyze
+> label, F‑36 reset‑prep commission, F‑18 `config` wiring/removal. The 3 refuted findings stay.
 
 ---
 

@@ -11,7 +11,7 @@ export const PORTS = {
   BLADEBURNER_STATUS: 10,
 };
 
-export const WORKER_SCRIPTS = ["/src/hack.js", "/src/grow.js", "/src/weaken.js"];
+export const WORKER_SCRIPTS = ["/src/hack.js", "/src/grow.js", "/src/weaken.js", "/src/share.js"];
 
 export const WORKER_RAM = {
   HACK: 1.7,
@@ -28,7 +28,7 @@ export const PROGRAMS = [
 ];
 
 export const DEFAULTS = {
-  hackPercent: 0.5,
+  hackPercent: 0.7,
   minSecurityThreshold: 5,
   moneyThreshold: 0.75,
   reservedHomeRAM: 32,

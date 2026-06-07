@@ -1,7 +1,8 @@
 import { scanNetwork } from "/src/lib/scanner.js";
 import { selectTargets } from "/src/lib/target-selector.js";
-import { WORKER_RAM, DEFAULTS } from "/src/lib/constants.js";
+import { WORKER_RAM, DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { deployWorkers } from "/src/lib/deployer.js";
+import { readPortData } from "/src/lib/port-registry.js";
 import { calculateBatch, isServerPrepped } from "/src/lib/batch-calculator.js";
 import { log, formatMoney, formatTime, formatRAM } from "/src/lib/utils.js";
 
@@ -168,6 +169,12 @@ export async function main(ns) {
   ns.disableLog("ALL");
 
   while (true) {
+    // Reclaim RAM held by the previous cycle's share() fillers (they loop forever) so the
+    // income phases get first claim on the whole botnet again before we re-fill with share.
+    for (const h of ["home", ...scanNetwork(ns)]) {
+      if (ns.hasRootAccess(h)) ns.scriptKill("/src/share.js", h);
+    }
+
     const workerServers = getAllWorkerServers(ns);
     const totalFreeRAM = poolFreeRAM(workerServers);
 
@@ -178,7 +185,9 @@ export async function main(ns) {
     }
 
     // Select investment targets (top by maxMoney potential)
-    const targetCount = Math.max(3, Math.min(6, Math.floor(totalFreeRAM / 256) || 3));
+    // Scale targets with the pool, capped at 10 — more parallel income streams (and more of
+    // the botnet working) when RAM is plentiful.
+    const targetCount = Math.max(3, Math.min(10, Math.floor(totalFreeRAM / 256)));
     const targets = selectTargets(ns, targetCount);
 
     if (targets.length === 0) {
@@ -303,9 +312,43 @@ export async function main(ns) {
     }
 
     // ──────────────────────────────────────────────
+    // Phase 4: Convert ALL leftover RAM into faction
+    //   reputation via share() — but ONLY while
+    //   actively grinding a faction (else share does
+    //   nothing useful). HWGW against a handful of
+    //   targets can't consume a large botnet, so this
+    //   is what keeps the surplus RAM productive.
+    //
+    //   We read faction-manager's status port instead
+    //   of calling Singularity here (keeps this hot
+    //   manager's RAM low). share() loops forever, so
+    //   it's killed at the top of each cycle and
+    //   re-filled here on whatever the income phases
+    //   left free.
+    // ──────────────────────────────────────────────
+    let shareThreads = 0;
+    const factionStatus = readPortData(ns, PORTS.FACTION_STATUS);
+    const grindingFaction = !!(factionStatus && factionStatus.currentFaction && factionStatus.rep < factionStatus.targetRep);
+    if (grindingFaction) {
+      const shareRam = ns.getScriptRam("/src/share.js") || WORKER_RAM.WEAKEN;
+      for (const server of workerServers) {
+        if (server.freeRAM < shareRam) continue;
+        if (!ns.fileExists("/src/share.js", server.hostname)) deployWorkers(ns, server.hostname);
+        const threads = Math.floor(server.freeRAM / shareRam);
+        if (threads <= 0) continue;
+        const pid = ns.exec("/src/share.js", server.hostname, threads);
+        if (pid > 0) {
+          server.freeRAM -= threads * shareRam;
+          shareThreads += threads;
+        }
+      }
+      if (shareThreads > 0) summary.push(`share:${shareThreads}t`);
+    }
+
+    // ──────────────────────────────────────────────
     // Logging
     // ──────────────────────────────────────────────
-    if (totalThreads > 0 || hwgwBlocked) {
+    if (totalThreads > 0 || hwgwBlocked || shareThreads > 0) {
       const usedRAM = totalFreeRAM - poolFreeRAM(workerServers);
       const pct = totalFreeRAM > 0 ? ((usedRAM / totalFreeRAM) * 100).toFixed(0) : "0";
       if (hwgwBlocked && totalThreads === 0) {
@@ -340,6 +383,12 @@ export async function main(ns) {
       sleepTime = DEFAULTS.managerCycleMs;
     } else {
       sleepTime = DEFAULTS.managerCycleMs;
+    }
+
+    // If only share() ran this cycle, sleep longer so we don't churn kill+redispatch every
+    // few seconds (share keeps running during the sleep regardless).
+    if (shareThreads > 0 && hwgwCompletionTime === 0 && prepWeakenTime === 0) {
+      sleepTime = Math.max(sleepTime, 30000);
     }
 
     await ns.sleep(sleepTime);
