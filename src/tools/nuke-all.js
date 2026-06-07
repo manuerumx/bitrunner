@@ -1,5 +1,6 @@
 import { scanNetwork } from "/src/lib/scanner.js";
 import { PROGRAMS } from "/src/lib/constants.js";
+import { deployWorkers } from "/src/lib/deployer.js";
 import { tlog, formatRAM, formatMoney } from "/src/lib/utils.js";
 
 /** @param {NS} ns */
@@ -15,9 +16,8 @@ export async function main(ns) {
       continue;
     }
 
-    const server = ns.getServer(hostname);
-    if (server.requiredHackingSkill > ns.getHackingLevel()) continue;
-
+    // Rooting only needs the port programs, NOT a sufficient hacking level (that only gates
+    // ns.hack). Skipping high-level servers here left rootable grow/weaken RAM unclaimed.
     for (const prog of programs) {
       try { ns[prog.fn](hostname); } catch {}
     }
@@ -26,6 +26,10 @@ export async function main(ns) {
     if (updated.openPortCount >= updated.numOpenPortsRequired) {
       try {
         ns.nuke(hostname);
+        // Deploy the workers immediately. Without this, a host rooted only by nuke-all has
+        // root + RAM but no scripts, so the coordinator's ns.exec silently returns 0 and the
+        // RAM is never used — a direct cause of "workers only on home + purchased".
+        deployWorkers(ns, hostname);
         rooted++;
         tlog(ns, `ROOTED: ${hostname} (${formatRAM(updated.maxRam)}, ${formatMoney(updated.moneyMax)} max)`);
       } catch {}

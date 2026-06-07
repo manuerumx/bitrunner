@@ -139,7 +139,17 @@ export async function main(ns) {
 
     const investOffer = ns.corporation.getInvestmentOffer();
     if (investOffer && investOffer.round <= 2 && investOffer.funds > 0) {
-      log(ns, `Corp: investment offer round ${investOffer.round}: ${formatMoney(investOffer.funds)}`);
+      // Accept the early (bootstrap) funding rounds when the injection is material — at least
+      // the corp's current funds. The equity dilution is worth the capital this early. Rounds
+      // beyond 2 are left for manual judgement, since dilution compounds and is irreversible.
+      if (investOffer.funds >= corp.funds) {
+        try {
+          ns.corporation.acceptInvestmentOffer();
+          log(ns, `Corp: ACCEPTED investment round ${investOffer.round} for ${formatMoney(investOffer.funds)}`);
+        } catch {}
+      } else {
+        log(ns, `Corp: investment offer round ${investOffer.round}: ${formatMoney(investOffer.funds)} (below threshold, holding)`);
+      }
     }
 
     writePortData(ns, PORTS.CORP_STATUS, {

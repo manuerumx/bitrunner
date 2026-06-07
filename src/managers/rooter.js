@@ -1,5 +1,6 @@
 import { scanNetwork } from "/src/lib/scanner.js";
-import { DEFAULTS, PROGRAMS, WORKER_SCRIPTS } from "/src/lib/constants.js";
+import { DEFAULTS, PROGRAMS } from "/src/lib/constants.js";
+import { deployWorkers, ensureWorkers } from "/src/lib/deployer.js";
 import { log, formatMoney } from "/src/lib/utils.js";
 
 function getAvailablePrograms(ns) {
@@ -19,15 +20,10 @@ function openPorts(ns, hostname, programs) {
   return opened;
 }
 
-function deployWorkers(ns, hostname) {
-  ns.scp(WORKER_SCRIPTS, hostname, "home");
-}
-
 /** @param {NS} ns */
 export async function main(ns) {
   ns.disableLog("ALL");
   const cycleMs = DEFAULTS.rooterCycleMs;
-  const deployed = new Set(); // hosts we've already scp'd workers to
 
   while (true) {
     const programs = getAvailablePrograms(ns);
@@ -35,11 +31,11 @@ export async function main(ns) {
 
     for (const hostname of hostnames) {
       if (ns.hasRootAccess(hostname)) {
-        // Only copy workers once per host — re-scp'ing every host every cycle is wasteful.
-        if (!deployed.has(hostname)) {
-          deployWorkers(ns, hostname);
-          deployed.add(hostname);
-        }
+        // Self-healing deploy: copy the workers whenever they're MISSING (gated on file
+        // presence, not an in-memory Set). This re-covers hosts rooted by another tool, a
+        // prior incomplete deploy, or files that were cleared — cases the old once-per-run
+        // Set silently missed (and it couldn't survive a restart either).
+        ensureWorkers(ns, hostname);
         continue;
       }
 
@@ -54,7 +50,6 @@ export async function main(ns) {
         ns.nuke(hostname);
         log(ns, `ROOTED: ${hostname} (${ns.getServerMaxRam(hostname)} GB RAM, ${formatMoney(ns.getServerMaxMoney(hostname))} max)`);
         deployWorkers(ns, hostname);
-        deployed.add(hostname);
       } catch {
         // nuke failed (ports not all open yet), retry next cycle
       }

@@ -1,6 +1,7 @@
 import { scanNetwork } from "/src/lib/scanner.js";
 import { selectTargets } from "/src/lib/target-selector.js";
 import { WORKER_RAM, DEFAULTS } from "/src/lib/constants.js";
+import { deployWorkers } from "/src/lib/deployer.js";
 import { calculateBatch, isServerPrepped } from "/src/lib/batch-calculator.js";
 import { log, formatMoney, formatTime, formatRAM } from "/src/lib/utils.js";
 
@@ -29,7 +30,21 @@ function getAllWorkerServers(ns) {
     servers.push({ hostname: "home", freeRAM: homeFree });
   }
 
-  servers.sort((a, b) => b.freeRAM - a.freeRAM);
+  // Spread work across the WHOLE botnet instead of packing the biggest hosts first.
+  // Small rooted network servers are drained first; home is forced to the very end so it is
+  // used only as last-resort overflow (home is the most contended host — every manager runs
+  // there — and carries the reservedHomeRAM block).
+  //
+  // This is the fix for "workers only ever run on home + purchased servers": the old
+  // descending sort let home + the large purchased servers absorb every per-operation
+  // allocation before allocateThreads ever reached the small servers. Bitburner imposes no
+  // co-location requirement (one op's threads can be split across many hosts and still land
+  // correctly), so spreading is free — it just makes the small servers actually carry load.
+  servers.sort((a, b) => {
+    if (a.hostname === "home") return 1;
+    if (b.hostname === "home") return -1;
+    return a.freeRAM - b.freeRAM;
+  });
   return servers;
 }
 
@@ -39,8 +54,22 @@ function poolFreeRAM(workerServers) {
 
 function execWorker(ns, script, host, threads, target, delay = 0) {
   if (threads <= 0) return 0;
-  const pid = ns.exec(script, host, threads, target, delay);
-  return pid > 0 ? threads : 0;
+  let pid = ns.exec(script, host, threads, target, delay);
+  if (pid === 0 && host !== "home") {
+    // exec returned 0: most often the worker file isn't on this host yet (the rooter hasn't
+    // reached it, or it was rooted by nuke-all/another tool). Don't depend on the rooter —
+    // deploy the workers ourselves and retry once. This closes the fresh-start race where the
+    // coordinator (5s cycle) runs before the rooter (30s cycle) has scp'd a newly-rooted host.
+    deployWorkers(ns, host);
+    pid = ns.exec(script, host, threads, target, delay);
+  }
+  if (pid === 0) {
+    // Still failed → genuine RAM contention (e.g. home, where managers also run). Surface it
+    // instead of silently dropping the threads, which is what hid dead hosts before.
+    log(ns, `exec failed: ${script} x${threads} on ${host} (RAM contended or undeployable)`);
+    return 0;
+  }
+  return threads;
 }
 
 // --- THREAD ALLOCATION ---

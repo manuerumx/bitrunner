@@ -1,4 +1,5 @@
-import { DEFAULTS, WORKER_SCRIPTS } from "/src/lib/constants.js";
+import { DEFAULTS } from "/src/lib/constants.js";
+import { deployWorkers } from "/src/lib/deployer.js";
 import { log, formatMoney, formatRAM } from "/src/lib/utils.js";
 
 /** @param {NS} ns */
@@ -23,7 +24,7 @@ export async function main(ns) {
 
         const hostname = ns.cloud.purchaseServer(prefix + owned.length, targetRAM);
         if (hostname) {
-          ns.scp(WORKER_SCRIPTS, hostname, "home");
+          deployWorkers(ns, hostname);
           log(ns, `BOUGHT: ${hostname} (${formatRAM(targetRAM)}) for ${formatMoney(ns.cloud.getServerCost(targetRAM))}`);
         }
       }

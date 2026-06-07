@@ -1,5 +1,5 @@
 import { scanNetwork } from "/src/lib/scanner.js";
-import { WORKER_SCRIPTS } from "/src/lib/constants.js";
+import { deployWorkers } from "/src/lib/deployer.js";
 import { tlog } from "/src/lib/utils.js";
 
 /** @param {NS} ns */
@@ -10,7 +10,7 @@ export async function main(ns) {
   for (const hostname of hostnames) {
     if (!ns.hasRootAccess(hostname)) continue;
     if (ns.getServerMaxRam(hostname) === 0) continue;
-    ns.scp(WORKER_SCRIPTS, hostname, "home");
+    deployWorkers(ns, hostname);
     deployed++;
   }
 

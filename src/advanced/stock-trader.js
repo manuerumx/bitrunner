@@ -84,7 +84,10 @@ export async function main(ns) {
   while (true) {
     const symbols = ns.stock.getSymbols();
     const money = ns.getPlayer().money;
-    const budget = money * DEFAULTS.stockBudgetPercent;
+    // Per-cycle spend cap. Decrement it as we open positions so the full 25% isn't sized
+    // against EACH strong-forecast symbol — otherwise the first few symbols could each try to
+    // spend the whole budget and drain cash meant to stay liquid for servers/augs.
+    let remaining = money * DEFAULTS.stockBudgetPercent;
 
     for (const sym of symbols) {
       const [longShares, longAvg, shortShares, shortAvg] = ns.stock.getPosition(sym);
@@ -117,13 +120,14 @@ export async function main(ns) {
         }
 
         if (forecast > FORECAST_BUY_THRESHOLD && longShares === 0) {
-          const affordable = Math.floor((budget - COMMISSION) / ns.stock.getAskPrice(sym));
+          const affordable = Math.floor((remaining - COMMISSION) / ns.stock.getAskPrice(sym));
           const shares = Math.min(affordable, maxShares - longShares);
           if (shares > 0) {
             const cost = ns.stock.getPurchaseCost(sym, shares, "L");
-            if (cost <= budget && cost > 0) {
+            if (cost <= remaining && cost > 0) {
               const price = ns.stock.buyStock(sym, shares);
               if (price > 0) {
+                remaining -= cost;
                 log(ns, `BUY LONG ${sym}: ${shares} shares @ ${formatMoney(price)} (forecast: ${(forecast * 100).toFixed(1)}%)`);
               }
             }
@@ -131,14 +135,15 @@ export async function main(ns) {
         }
 
         if (useShorts && forecast < 1 - FORECAST_BUY_THRESHOLD && shortShares === 0) {
-          const affordable = Math.floor((budget - COMMISSION) / ns.stock.getBidPrice(sym));
+          const affordable = Math.floor((remaining - COMMISSION) / ns.stock.getBidPrice(sym));
           const shares = Math.min(affordable, maxShares - shortShares);
           if (shares > 0) {
             const cost = ns.stock.getPurchaseCost(sym, shares, "S");
-            if (cost <= budget && cost > 0) {
+            if (cost <= remaining && cost > 0) {
               try {
                 const price = ns.stock.buyShort(sym, shares);
                 if (price > 0) {
+                  remaining -= cost;
                   log(ns, `BUY SHORT ${sym}: ${shares} shares @ ${formatMoney(price)} (forecast: ${(forecast * 100).toFixed(1)}%)`);
                 }
               } catch {

@@ -49,18 +49,28 @@ function getAvailableAugs(ns, faction) {
   }
 }
 
+// Pick the joined faction most worth grinding rep for RIGHT NOW: the one with the most augs
+// we still can't afford the reputation for. Factions whose augs are all already within reach
+// score 0 and are skipped, so once we max a faction we advance to the next instead of parking
+// idle on a faction we've already finished.
 function getBestFactionForWork(ns) {
   const factions = getJoinedFactions(ns);
   let bestFaction = null;
-  let bestAugCount = 0;
+  let bestScore = 0;
 
   for (const faction of factions) {
     const augs = getAvailableAugs(ns, faction);
-    const hasPriority = augs.some((a) => PRIORITY_AUGS.includes(a));
-    const score = augs.length + (hasPriority ? 100 : 0);
+    if (augs.length === 0) continue;
 
-    if (score > bestAugCount) {
-      bestAugCount = score;
+    const currentRep = ns.singularity.getFactionRep(faction);
+    const augsNeedingRep = augs.filter((a) => ns.singularity.getAugmentationRepReq(a) > currentRep);
+    if (augsNeedingRep.length === 0) continue; // already grindable here → look elsewhere
+
+    const hasPriority = augsNeedingRep.some((a) => PRIORITY_AUGS.includes(a));
+    const score = augsNeedingRep.length + (hasPriority ? 100 : 0);
+
+    if (score > bestScore) {
+      bestScore = score;
       bestFaction = faction;
     }
   }
@@ -97,23 +107,19 @@ export async function main(ns) {
         maxRepNeeded = Math.max(maxRepNeeded, repReq);
       }
 
-      const currentRep = ns.singularity.getFactionRep(bestFaction);
-
-      if (currentRep < maxRepNeeded) {
-        const isWorkingForBest = currentWork && currentWork.type === "FACTION" && currentWork.factionName === bestFaction;
-
-        if (!isWorkingForBest) {
+      // bestFaction is only returned while it still has augs needing rep, so always grind it.
+      const isWorkingForBest = currentWork && currentWork.type === "FACTION" && currentWork.factionName === bestFaction;
+      if (!isWorkingForBest) {
+        try {
+          ns.singularity.workForFaction(bestFaction, "hacking", false);
+          log(ns, `Working for ${bestFaction} (${augs.length} augs, need ${formatMoney(maxRepNeeded)} rep)`);
+        } catch {
           try {
-            ns.singularity.workForFaction(bestFaction, "hacking", false);
-            log(ns, `Working for ${bestFaction} (${augs.length} augs, need ${formatMoney(maxRepNeeded)} rep)`);
+            ns.singularity.workForFaction(bestFaction, "field", false);
           } catch {
             try {
-              ns.singularity.workForFaction(bestFaction, "field", false);
-            } catch {
-              try {
-                ns.singularity.workForFaction(bestFaction, "security", false);
-              } catch {}
-            }
+              ns.singularity.workForFaction(bestFaction, "security", false);
+            } catch {}
           }
         }
       }
@@ -124,6 +130,9 @@ export async function main(ns) {
         targetRep: maxRepNeeded,
         availableAugs: augs.length,
       });
+    } else {
+      // No joined faction has augs we still need rep for — nothing to grind this cycle.
+      writePortData(ns, PORTS.FACTION_STATUS, { currentFaction: null, rep: 0, targetRep: 0, availableAugs: 0 });
     }
 
     await ns.sleep(30000);

@@ -356,70 +356,86 @@ const SOLVERS = {
   },
 
   "Compression III: LZ Compression": (data) => {
-    let result = "";
-    let pos = 0;
+    // Optimal LZ encoder — a port of Bitburner's own reference comprLZEncode. The grader
+    // accepts an answer only if it decodes to `data` AND is no longer than the game's optimal
+    // compression, so the previous greedy heuristic was rejected for producing valid-but-longer
+    // output (e.g. "10×a" -> "1a811a" len 6 vs optimal "1a91" len 4). This is a DP over states:
+    //   state[0][j] = shortest encoding whose in-progress final chunk is a LITERAL of length j
+    //   state[i][j] (i>0) = ... a BACKREFERENCE of offset i and length j
+    // The stored string is the encoding of everything BEFORE that in-progress final chunk.
+    const plain = data;
+    if (plain.length === 0) return "";
 
-    while (pos < data.length) {
-      let bestRefLen = 0, bestRefOffset = 0;
-      for (let offset = 1; offset <= Math.min(9, pos); offset++) {
-        let len = 0;
-        while (pos + len < data.length && len < 9) {
-          if (data[pos + len] === data[pos - offset + (len % offset)]) len++;
-          else break;
+    const blank = () => Array.from({ length: 10 }, () => new Array(10).fill(null));
+    const setBest = (state, i, j, str) => {
+      const cur = state[i][j];
+      if (cur === null || str.length < cur.length) state[i][j] = str;
+    };
+
+    let curState = blank();
+    curState[0][1] = ""; // first character begins a length-1 literal, nothing encoded before it
+
+    for (let i = 1; i < plain.length; i++) {
+      const c = plain[i];
+      const newState = blank();
+
+      // Transitions out of an in-progress literal chunk.
+      for (let len = 1; len <= 9; len++) {
+        const s = curState[0][len];
+        if (s === null) continue;
+        if (len < 9) {
+          setBest(newState, 0, len + 1, s);                                    // extend literal
+        } else {
+          setBest(newState, 0, 1, s + "9" + plain.substring(i - 9, i) + "0");  // flush, start literal
         }
-        if (len > bestRefLen) {
-          bestRefLen = len;
-          bestRefOffset = offset;
+        for (let offset = 1; offset <= Math.min(9, i); offset++) {
+          if (plain[i - offset] === c) {
+            setBest(newState, offset, 1, s + len + plain.substring(i - len, i)); // flush literal, start backref
+          }
         }
       }
 
-      let litEnd = pos;
-      if (bestRefLen >= 2) {
-        if (pos > 0 || result.length > 0) {
-          result += "0";
-        }
-        result += bestRefLen.toString() + bestRefOffset.toString();
-        pos += bestRefLen;
-      } else {
-        let litLen = 0;
-        while (litLen < 9 && pos + litLen < data.length) {
-          let hasGoodRef = false;
-          const checkPos = pos + litLen;
-          for (let offset = 1; offset <= Math.min(9, checkPos); offset++) {
-            let len = 0;
-            while (checkPos + len < data.length && len < 9) {
-              if (data[checkPos + len] === data[checkPos - offset + (len % offset)]) len++;
-              else break;
+      // Transitions out of an in-progress backreference chunk.
+      for (let offset = 1; offset <= 9; offset++) {
+        for (let len = 1; len <= 9; len++) {
+          const s = curState[offset][len];
+          if (s === null) continue;
+          if (plain[i - offset] === c) {
+            if (len < 9) {
+              setBest(newState, offset, len + 1, s);                           // extend backref
+            } else {
+              setBest(newState, offset, 1, s + "9" + offset + "0");            // flush, start backref
             }
-            if (len >= 3) { hasGoodRef = true; break; }
           }
-          if (hasGoodRef && litLen > 0) break;
-          litLen++;
-          if (!hasGoodRef && litLen >= 9) break;
-        }
-        if (litLen === 0) litLen = 1;
-        result += litLen.toString() + data.slice(pos, pos + litLen);
-        pos += litLen;
-        if (pos < data.length) {
-          let refLen = 0, refOffset = 0;
-          for (let offset = 1; offset <= Math.min(9, pos); offset++) {
-            let len = 0;
-            while (pos + len < data.length && len < 9) {
-              if (data[pos + len] === data[pos - offset + (len % offset)]) len++;
-              else break;
+          setBest(newState, 0, 1, s + len + offset);                           // flush backref, start literal
+          for (let newOffset = 1; newOffset <= Math.min(9, i); newOffset++) {
+            if (plain[i - newOffset] === c) {
+              setBest(newState, newOffset, 1, s + len + offset + "0");         // flush backref, start backref
             }
-            if (len > refLen) { refLen = len; refOffset = offset; }
-          }
-          if (refLen >= 2) {
-            result += refLen.toString() + refOffset.toString();
-            pos += refLen;
-          } else {
-            result += "0";
           }
         }
+      }
+
+      curState = newState;
+    }
+
+    // Flush the final in-progress chunk and take the shortest overall.
+    let result = null;
+    for (let len = 1; len <= 9; len++) {
+      const s = curState[0][len];
+      if (s === null) continue;
+      const out = s + len + plain.substring(plain.length - len, plain.length);
+      if (result === null || out.length < result.length) result = out;
+    }
+    for (let offset = 1; offset <= 9; offset++) {
+      for (let len = 1; len <= 9; len++) {
+        const s = curState[offset][len];
+        if (s === null) continue;
+        const out = s + len + "" + offset;
+        if (result === null || out.length < result.length) result = out;
       }
     }
-    return result;
+    return result === null ? "" : result;
   },
 
   "Encryption I: Caesar Cipher": (data) => {
@@ -486,6 +502,12 @@ function solveStockTrader(k, prices) {
 export async function main(ns) {
   ns.disableLog("ALL");
 
+  // Coding contracts SELF-DESTRUCT after their last failed attempt. A wrong answer here used
+  // to be re-attempted every 5-min cycle, burning one try at a time until the contract (and
+  // its money/rep/faction-invite reward) was permanently lost. This Set remembers contracts a
+  // solver already got wrong this session so we never re-attempt them. Cleared on restart.
+  const failedContracts = new Set();
+
   while (true) {
     const hostnames = ["home", ...scanNetwork(ns)];
     let solved = 0, failed = 0, skipped = 0;
@@ -493,10 +515,26 @@ export async function main(ns) {
     for (const hostname of hostnames) {
       const contracts = ns.ls(hostname, ".cct");
       for (const contract of contracts) {
+        const id = `${hostname}/${contract}`;
+
+        // Already failed once this session — don't spend another try on it.
+        if (failedContracts.has(id)) {
+          skipped++;
+          continue;
+        }
+
         const type = ns.codingcontract.getContractType(contract, hostname);
         const solver = SOLVERS[type];
 
         if (!solver) {
+          skipped++;
+          continue;
+        }
+
+        // Never gamble the LAST try on an auto-solver — if it's wrong the contract is gone.
+        // Leave low-try contracts for manual solving instead.
+        if (ns.codingcontract.getNumTriesRemaining(contract, hostname) <= 1) {
+          log(ns, `SKIP (1 try left): "${type}" on ${hostname}`);
           skipped++;
           continue;
         }
@@ -509,10 +547,15 @@ export async function main(ns) {
             log(ns, `SOLVED: "${type}" on ${hostname} -> ${reward}`);
             solved++;
           } else {
-            log(ns, `FAILED: "${type}" on ${hostname}`);
+            // Genuine wrong answer (a try was consumed). Blacklist so the loop can't drain
+            // the rest of the tries on the same bad solver over successive cycles.
+            log(ns, `FAILED: "${type}" on ${hostname} (will not retry this session)`);
+            failedContracts.add(id);
             failed++;
           }
         } catch (e) {
+          // Solver threw before attempt() — no try consumed; log but don't blacklist, since
+          // the contract itself may still be solvable once the solver is fixed.
           log(ns, `ERROR solving "${type}" on ${hostname}: ${e}`);
           failed++;
         }
@@ -520,7 +563,7 @@ export async function main(ns) {
     }
 
     if (solved > 0 || failed > 0) {
-      log(ns, `Contracts: ${solved} solved, ${failed} failed, ${skipped} unsupported`);
+      log(ns, `Contracts: ${solved} solved, ${failed} failed, ${skipped} skipped`);
     }
 
     await ns.sleep(300000);
