@@ -1,4 +1,3 @@
-// @ts-check
 import { scanNetwork, getServerDetails } from "/src/lib/scanner.js";
 
 /** @param {NS} ns */

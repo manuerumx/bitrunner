@@ -1,15 +1,19 @@
 import { scanNetwork } from "/src/lib/scanner.js";
 import { log, tlog } from "/src/lib/utils.js";
 
-const SOLVERS = {
+export const SOLVERS = {
   "Find Largest Prime Factor": (data) => {
     let n = data;
-    let factor = 2;
-    while (factor * factor <= n) {
-      while (n % factor === 0) n /= factor;
-      factor++;
+    let largest = 1;
+    for (let factor = 2; factor * factor <= n; factor++) {
+      while (n % factor === 0) {
+        largest = factor;
+        n /= factor;
+      }
     }
-    return n;
+    // If n > 1 here it's a prime larger than any factor already divided out (e.g. 13195 -> 29).
+    // Otherwise the largest factor we divided out is the answer (e.g. 100 -> 5, where n hit 1).
+    return n > 1 ? n : largest;
   },
 
   "Subarray with Maximum Sum": (data) => {

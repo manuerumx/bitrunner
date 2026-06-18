@@ -1,0 +1,26 @@
+#!/bin/sh
+# Block commits that break type-checking or unit tests.
+#
+# Activate once per clone (no dependencies, version-controlled):
+#   git config core.hooksPath .githooks
+#
+# Bypass for a single commit if you really need to:  git commit --no-verify
+
+if ! command -v node >/dev/null 2>&1; then
+  echo "[pre-commit] node not on PATH — skipping checks. Run 'npm run check && npm test' yourself." >&2
+  exit 0
+fi
+
+echo "[pre-commit] type-check (tsc)..."
+if ! npm run --silent check; then
+  echo "[pre-commit] BLOCKED: type errors. Fix them or commit with --no-verify." >&2
+  exit 1
+fi
+
+echo "[pre-commit] unit tests..."
+if ! npm test --silent >/dev/null 2>&1; then
+  echo "[pre-commit] BLOCKED: tests failing. Run 'npm test' to see details, or commit with --no-verify." >&2
+  exit 1
+fi
+
+echo "[pre-commit] OK"

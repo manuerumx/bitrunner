@@ -17,6 +17,37 @@ declare global {
   type FactionName = Parameters<NS["sleeve"]["setToFactionWork"]>[1];
   type GymType = Parameters<NS["sleeve"]["setToGymWorkout"]>[2];
   type CrimeType = Parameters<NS["sleeve"]["setToCommitCrime"]>[1];
+
+  // Port IPC payloads — the JSON shapes passed through the netscript ports listed in
+  // constants.js PORTS. Writers and readers both annotate against these so the contract
+  // is type-checked across files (see src/lib/port-registry.js).
+  interface FactionStatus {
+    currentFaction: string | null;
+    rep: number;
+    targetRep: number;
+    availableAugs: number;
+  }
+  interface GangStatus {
+    members: number;
+    income: number;
+    territory: number;
+    respect: number;
+    wantedPenalty: number;
+    warfare: boolean;
+  }
+  interface CorpStatus {
+    revenue: number;
+    expenses: number;
+    profit: number;
+    funds: number;
+    divisions: number;
+  }
+  interface BladeburnerStatus {
+    rank: number;
+    action: string;
+    stamina: string;
+    skillPoints: number;
+  }
 }
 
 export {};

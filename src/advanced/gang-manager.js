@@ -117,14 +117,16 @@ export async function main(ns) {
       log(ns, `Territory warfare: ${canWarfare ? "ENABLED" : "DISABLED"}`);
     }
 
-    writePortData(ns, PORTS.GANG_STATUS, {
+    /** @type {GangStatus} */
+    const status = {
       members: ns.gang.getMemberNames().length,
       income: totalIncome,
       territory: gangInfo.territory,
       respect: gangInfo.respect,
       wantedPenalty: gangInfo.wantedPenalty,
       warfare: canWarfare,
-    });
+    };
+    writePortData(ns, PORTS.GANG_STATUS, status);
 
     await ns.sleep(10000);
   }

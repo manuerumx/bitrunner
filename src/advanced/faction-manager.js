@@ -134,15 +134,19 @@ export async function main(ns) {
         }
       }
 
-      writePortData(ns, PORTS.FACTION_STATUS, {
+      /** @type {FactionStatus} */
+      const status = {
         currentFaction: bestFaction,
         rep: ns.singularity.getFactionRep(bestFaction),
         targetRep: maxRepNeeded,
         availableAugs: augs.length,
-      });
+      };
+      writePortData(ns, PORTS.FACTION_STATUS, status);
     } else {
       // No joined faction has augs we still need rep for — nothing to grind this cycle.
-      writePortData(ns, PORTS.FACTION_STATUS, { currentFaction: null, rep: 0, targetRep: 0, availableAugs: 0 });
+      /** @type {FactionStatus} */
+      const status = { currentFaction: null, rep: 0, targetRep: 0, availableAugs: 0 };
+      writePortData(ns, PORTS.FACTION_STATUS, status);
     }
 
     await ns.sleep(30000);

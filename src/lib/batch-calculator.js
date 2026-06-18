@@ -1,4 +1,3 @@
-// @ts-check
 import { WORKER_RAM, DEFAULTS } from "/src/lib/constants.js";
 
 /** @param {NS} ns */

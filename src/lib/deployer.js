@@ -1,4 +1,3 @@
-// @ts-check
 import { WORKER_SCRIPTS } from "/src/lib/constants.js";
 
 // Single source of truth for getting the worker scripts (hack/grow/weaken) onto a host so the

@@ -71,9 +71,14 @@ npm run check     # runs `tsc -p jsconfig.json` (no files emitted, just checking
 
 The **whole suite** is checked (`"checkJs": true` in
 [`jsconfig.json`](../jsconfig.json)) and currently passes clean. Treat a
-non-zero exit as a regression to fix before syncing. (The `// @ts-check`
-comments left on the `lib/` modules are now redundant with `checkJs` but
-harmless — they keep those files checked if you ever flip `checkJs` back off.)
+non-zero exit as a regression to fix before syncing.
+
+`strictNullChecks` was evaluated (2026-06-18) and **deferred**: it surfaces ~40
+errors that are almost all inference noise — empty-array `never[]` literals,
+`shift()` results that are guarded by `while (queue.length)` at runtime, and
+`Server` fields that the NS defs mark optional — rather than real bugs. Not
+worth the scattered `?? 0` / `!` annotations today; revisit if more values get
+concrete types.
 
 The strict enum string types (faction work, gym stat, crime, bladeburner
 actions) the game validates at runtime are exposed globally in
@@ -94,6 +99,34 @@ How the typing resolves:
 Note: the **game does not type-check** — since v2.7.0 it natively transpiles
 `.js/.jsx/.ts/.tsx`, but it strips types and runs the code regardless of errors.
 Type safety lives entirely in your editor / `npm run check`.
+
+## Unit tests (no game required)
+
+The pure logic — contract solvers, HWGW batch math, formatters — is tested with
+the built-in Node test runner, no Bitburner needed:
+
+```bash
+npm test
+```
+
+Tests live in [`test/`](../test) (excluded from game sync). Because the scripts
+import each other with game-root absolute paths (`/src/...`), a small ESM resolve
+hook ([`test/loader-hooks.mjs`](../test/loader-hooks.mjs), wired in via
+`NODE_OPTIONS` in the `test` script) maps those onto real files so Node can load
+them. These caught a real bug — Find Largest Prime Factor returned 1 for numbers
+like 100 — which is exactly what they guard against.
+
+## Pre-commit hook
+
+A version-controlled hook in [`.githooks/`](../.githooks) runs `npm run check`
+and `npm test` and blocks the commit if either fails. Activate it once per clone:
+
+```bash
+git config core.hooksPath .githooks
+```
+
+Bypass for one commit with `git commit --no-verify`. If `node` isn't on the
+hook's PATH it skips with a warning rather than blocking.
 
 ## What else the RFA can do
 

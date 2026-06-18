@@ -114,12 +114,14 @@ export async function main(ns) {
     }
 
     const stamina = getStamina(ns);
-    writePortData(ns, PORTS.BLADEBURNER_STATUS, {
+    /** @type {BladeburnerStatus} */
+    const status = {
       rank: ns.bladeburner.getRank(),
       action: `${action.type}:${action.name}`,
       stamina: `${stamina.current.toFixed(0)}/${stamina.max.toFixed(0)}`,
       skillPoints: ns.bladeburner.getSkillPoints(),
-    });
+    };
+    writePortData(ns, PORTS.BLADEBURNER_STATUS, status);
 
     await ns.sleep(5000);
   }

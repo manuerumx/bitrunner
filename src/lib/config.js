@@ -1,4 +1,3 @@
-// @ts-check
 import { DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { readPortData } from "/src/lib/port-registry.js";
 

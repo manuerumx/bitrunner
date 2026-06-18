@@ -1,4 +1,3 @@
-// @ts-check
 const SUFFIXES = ["", "k", "m", "b", "t", "q", "Q"];
 
 export function formatMoney(n) {

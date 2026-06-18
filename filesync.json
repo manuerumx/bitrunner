@@ -2,7 +2,7 @@
   "scriptsFolder": ".",
   "port": 12525,
   "allowedFiletypes": [".js", ".script", ".txt"],
-  "exclude": [".vscode", ".idea", ".github", ".git", "node_modules", "docs"],
+  "exclude": [".vscode", ".idea", ".github", ".git", "node_modules", "docs", "test"],
   "allowDeletingFiles": false,
   "pushAllOnConnection": true,
   "quiet": false,

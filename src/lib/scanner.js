@@ -1,4 +1,3 @@
-// @ts-check
 /** @param {NS} ns */
 export function scanNetwork(ns) {
   const visited = new Set(["home"]);

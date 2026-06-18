@@ -327,7 +327,7 @@ export async function main(ns) {
     //   left free.
     // ──────────────────────────────────────────────
     let shareThreads = 0;
-    const factionStatus = readPortData(ns, PORTS.FACTION_STATUS);
+    const factionStatus = /** @type {FactionStatus | null} */ (readPortData(ns, PORTS.FACTION_STATUS));
     const grindingFaction = !!(factionStatus && factionStatus.currentFaction && factionStatus.rep < factionStatus.targetRep);
     if (grindingFaction) {
       const shareRam = ns.getScriptRam("/src/share.js") || WORKER_RAM.WEAKEN;

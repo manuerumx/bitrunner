@@ -156,13 +156,15 @@ export async function main(ns) {
       }
     }
 
-    writePortData(ns, PORTS.CORP_STATUS, {
+    /** @type {CorpStatus} */
+    const status = {
       revenue: corp.revenue,
       expenses: corp.expenses,
       profit: corp.revenue - corp.expenses,
       funds: corp.funds,
       divisions: corp.divisions.length,
-    });
+    };
+    writePortData(ns, PORTS.CORP_STATUS, status);
 
     await ns.sleep(10000);
   }
