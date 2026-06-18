@@ -44,12 +44,15 @@ function launchManager(ns, manager) {
 function getNetworkStats(ns) {
   const hostnames = scanNetwork(ns);
   let rootedCount = 0;
+  let backdooredCount = 0;
   let totalRAM = 0;
   let usedRAM = 0;
 
   for (const hostname of hostnames) {
     if (ns.hasRootAccess(hostname)) {
       rootedCount++;
+      // backdoorInstalled is only readable via ns.getServer (+2 GB to this script's RAM).
+      if (ns.getServer(hostname).backdoorInstalled) backdooredCount++;
       totalRAM += ns.getServerMaxRam(hostname);
       usedRAM += ns.getServerUsedRam(hostname);
     }
@@ -58,6 +61,7 @@ function getNetworkStats(ns) {
   return {
     totalServers: hostnames.length,
     rootedCount,
+    backdooredCount,
     totalRAM,
     usedRAM,
     purchasedServers: ns.cloud.getServerNames().length,
@@ -79,7 +83,9 @@ export async function main(ns) {
 
   const sortedManagers = [...MANAGERS].sort((a, b) => a.priority - b.priority);
   const launchedLastCycle = new Set(); // managers ns.run() last cycle, awaiting confirmation they stayed up
-  const locked = new Set();            // managers that exited immediately (API/feature unavailable) — stop relaunching
+  const locked = new Set();            // managers that exited immediately too many times in a row — stop relaunching
+  const failures = new Map();          // script -> consecutive immediate-exit count, before it trips the lock
+  const LOCK_AFTER_FAILURES = 3;       // tolerate this many transient immediate-exits before locking (~15s of retries)
   const RELOCK_RETRY_CYCLES = 60;      // ~5 min at 5s/cycle: re-probe locked managers in case a feature got unlocked
   let cycle = 0;
 
@@ -92,10 +98,11 @@ export async function main(ns) {
     for (const manager of sortedManagers) {
       if (!ns.fileExists(manager.script)) continue;
 
-      // Already up (including started manually): keep managing it, and clear any stale lock.
+      // Already up (including started manually): keep managing it, and clear any stale state.
       if (isRunning(ns, manager.script)) {
         launchedLastCycle.delete(manager.script);
         locked.delete(manager.script);
+        failures.delete(manager.script);
         continue;
       }
 
@@ -103,12 +110,20 @@ export async function main(ns) {
       // spammed the terminal with "API required" every cycle.
       if (locked.has(manager.script)) continue;
 
-      // We launched it last cycle but it's already gone → it exited immediately. Lock it until
-      // the feature is unlocked (then started manually once) or the daemon is restarted.
+      // We launched it last cycle but it's already gone → it exited immediately. Count it, and
+      // only lock after LOCK_AFTER_FAILURES in a row, so a single transient (a momentary RAM blip)
+      // doesn't lock a healthy persistent manager like the rooter for the whole re-probe window.
+      // API-gated managers fail every cycle and still trip the lock within ~15s.
       if (launchedLastCycle.has(manager.script)) {
         launchedLastCycle.delete(manager.script);
-        locked.add(manager.script);
-        continue;
+        const fails = (failures.get(manager.script) || 0) + 1;
+        if (fails >= LOCK_AFTER_FAILURES) {
+          failures.delete(manager.script);
+          locked.add(manager.script);
+          continue;
+        }
+        failures.set(manager.script, fails);
+        // fall through and retry the launch this cycle
       }
 
       if (launchManager(ns, manager)) {
@@ -130,8 +145,8 @@ export async function main(ns) {
     ns.print(`  Home:    ${formatRAM(freeRAM)} free / ${formatRAM(homeRAM)}`);
     ns.print("");
     ns.print(`── Network ──`);
-    ns.print(`  Servers: ${net.rootedCount}/${net.totalServers} rooted`);
-    ns.print(`  Botnet:  ${formatRAM(net.usedRAM)} / ${formatRAM(net.totalRAM)} used`);
+    ns.print(`  Servers: ${net.rootedCount}/${net.totalServers} rooted | ${net.backdooredCount} backdoored`);
+    ns.print(`  Botnet:  ${formatRAM(net.totalRAM - net.usedRAM)} free / ${formatRAM(net.totalRAM)}`);
     ns.print(`  Purchased: ${net.purchasedServers}/25 | Hacknet: ${net.hacknetNodes}`);
     ns.print("");
     ns.print(`── Managers ──`);
