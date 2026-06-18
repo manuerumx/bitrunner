@@ -1,3 +1,4 @@
+// @ts-check
 const SUFFIXES = ["", "k", "m", "b", "t", "q", "Q"];
 
 export function formatMoney(n) {
@@ -33,10 +34,12 @@ export function formatPercent(n) {
   return `${(n * 100).toFixed(1)}%`;
 }
 
+/** @param {NS} ns */
 export function log(ns, msg) {
   ns.print(`[${new Date().toLocaleTimeString()}] ${msg}`);
 }
 
+/** @param {NS} ns */
 export function tlog(ns, msg) {
   ns.tprint(`[${new Date().toLocaleTimeString()}] ${msg}`);
 }

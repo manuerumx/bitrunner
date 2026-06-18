@@ -9,6 +9,13 @@ function hasSleeveAPI(ns) {
   }
 }
 
+/**
+ * @param {NS} ns
+ * @returns {{ type: "recovery" } | { type: "sync" }
+ *   | { type: "faction", faction: FactionName, workType: FactionWorkType }
+ *   | { type: "gym", stat: GymType }
+ *   | { type: "crime", crime: CrimeType }}
+ */
 function getSleeveTask(ns, sleeveNum, totalSleeves) {
   const sleeve = ns.sleeve.getSleeve(sleeveNum);
 

@@ -16,6 +16,10 @@ function getStamina(ns) {
   return { current, max, ratio: current / max };
 }
 
+/**
+ * @param {NS} ns
+ * @returns {{ type: BladeburnerActionType, name: BladeburnerActionName }}
+ */
 function getBestAction(ns) {
   const stamina = getStamina(ns);
 

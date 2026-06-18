@@ -51,7 +51,7 @@ export async function main(ns) {
     return;
   }
 
-  const force = ["now", "force", "all"].includes(ns.args[0]);
+  const force = ["now", "force", "all"].includes(String(ns.args[0]));
 
   // Stop anything that keeps BUYING. Killing the daemon prevents it from relaunching
   // the trader; killing the trader stops the currently-running one immediately.

@@ -1,5 +1,7 @@
+// @ts-check
 import { WORKER_RAM, DEFAULTS } from "/src/lib/constants.js";
 
+/** @param {NS} ns */
 export function calculatePrepThreads(ns, target) {
   const hostname = target.hostname;
   const currentSecurity = ns.getServerSecurityLevel(hostname);
@@ -32,6 +34,7 @@ export function calculatePrepThreads(ns, target) {
   };
 }
 
+/** @param {NS} ns */
 export function calculateBatch(ns, hostname, hackPercent = DEFAULTS.hackPercent) {
   const maxMoney = ns.getServerMaxMoney(hostname);
   const hackThreads = Math.max(1, Math.floor(ns.hackAnalyzeThreads(hostname, maxMoney * hackPercent)));
@@ -91,6 +94,7 @@ export function calculateBatch(ns, hostname, hackPercent = DEFAULTS.hackPercent)
   };
 }
 
+/** @param {NS} ns */
 export function isServerPrepped(ns, hostname) {
   const currentSecurity = ns.getServerSecurityLevel(hostname);
   const minSecurity = ns.getServerMinSecurityLevel(hostname);

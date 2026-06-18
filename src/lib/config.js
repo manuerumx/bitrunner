@@ -1,6 +1,8 @@
+// @ts-check
 import { DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { readPortData } from "/src/lib/port-registry.js";
 
+/** @param {NS} ns */
 export function getConfig(ns) {
   const overrides = readPortData(ns, PORTS.CONFIG_OVERRIDES);
   if (overrides && typeof overrides === "object") {

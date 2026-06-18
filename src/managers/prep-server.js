@@ -28,7 +28,7 @@ function getAllWorkerServers(ns) {
 /** @param {NS} ns */
 export async function main(ns) {
   ns.disableLog("ALL");
-  const target = ns.args[0];
+  const target = String(ns.args[0] ?? "");
 
   if (!target) {
     ns.tprint("Usage: run src/managers/prep-server.js <target>");

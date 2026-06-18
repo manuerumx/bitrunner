@@ -461,9 +461,11 @@ const SOLVERS = {
     if (!data.length || !data[0].length) return "";
     const rows = data.length, cols = data[0].length;
     if (data[0][0] === 1 || data[rows - 1][cols - 1] === 1) return "";
+    /** @type {Array<[number, number, string]>} */
     const dirs = [[0, 1, "R"], [0, -1, "L"], [1, 0, "D"], [-1, 0, "U"]];
     const visited = Array.from({ length: rows }, () => new Array(cols).fill(false));
     visited[0][0] = true;
+    /** @type {Array<[number, number, string]>} */
     const queue = [[0, 0, ""]];
     while (queue.length > 0) {
       const [r, c, path] = queue.shift();

@@ -1,3 +1,4 @@
+// @ts-check
 export const PORTS = {
   DAEMON_HEARTBEAT: 1,
   HACK_COMMANDS: 2,

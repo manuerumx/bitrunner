@@ -1,3 +1,5 @@
+// @ts-check
+/** @param {NS} ns */
 export function scanNetwork(ns) {
   const visited = new Set(["home"]);
   const queue = ["home"];
@@ -14,6 +16,7 @@ export function scanNetwork(ns) {
   return [...visited];
 }
 
+/** @param {NS} ns */
 export function getServerDetails(ns, hostname) {
   const server = ns.getServer(hostname);
   return {
@@ -36,6 +39,7 @@ export function getServerDetails(ns, hostname) {
   };
 }
 
+/** @param {NS} ns */
 export function getPath(ns, target) {
   const visited = new Set(["home"]);
   const queue = [["home"]];

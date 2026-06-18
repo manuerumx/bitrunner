@@ -1,5 +1,7 @@
+// @ts-check
 import { scanNetwork, getServerDetails } from "/src/lib/scanner.js";
 
+/** @param {NS} ns */
 export function rankTargets(ns, servers) {
   const playerHacking = ns.getHackingLevel();
   const scored = [];
@@ -45,6 +47,7 @@ export function rankTargets(ns, servers) {
   return scored;
 }
 
+/** @param {NS} ns */
 export function selectTargets(ns, count = 1) {
   const hostnames = scanNetwork(ns);
   const servers = hostnames.map((h) => getServerDetails(ns, h));

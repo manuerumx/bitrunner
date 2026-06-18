@@ -1,0 +1,14 @@
+{
+  "name": "bitrunner",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Bitburner automation suite, synced into the game via the Remote File API",
+  "scripts": {
+    "sync": "npx -y bitburner-filesync@1.2.0-beta4",
+    "sync:dry": "npx -y bitburner-filesync@1.2.0-beta4 --dry",
+    "check": "tsc -p jsconfig.json"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}
