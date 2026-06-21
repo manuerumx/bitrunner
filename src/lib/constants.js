@@ -41,4 +41,8 @@ export const DEFAULTS = {
   rooterCycleMs: 30000,
   serverBuyerCycleMs: 60000,
   hacknetCycleMs: 10000,
+  // When true, hack-coordinator soaks ALL surplus RAM (home + idle botnet) with share() every
+  // cycle, even if the faction-manager isn't reporting an active grind. Toggle at runtime with
+  // tools/share-idle.js. share() only boosts rep while you're actually working for a faction.
+  shareIdleRAM: false,
 };

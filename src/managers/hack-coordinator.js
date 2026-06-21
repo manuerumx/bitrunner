@@ -3,6 +3,7 @@ import { selectTargets } from "/src/lib/target-selector.js";
 import { WORKER_RAM, DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { deployWorkers } from "/src/lib/deployer.js";
 import { readPortData } from "/src/lib/port-registry.js";
+import { getConfig } from "/src/lib/config.js";
 import { calculateBatch, isServerPrepped } from "/src/lib/batch-calculator.js";
 import { log, formatMoney, formatTime, formatRAM } from "/src/lib/utils.js";
 
@@ -329,7 +330,10 @@ export async function main(ns) {
     let shareThreads = 0;
     const factionStatus = /** @type {FactionStatus | null} */ (readPortData(ns, PORTS.FACTION_STATUS));
     const grindingFaction = !!(factionStatus && factionStatus.currentFaction && factionStatus.rep < factionStatus.targetRep);
-    if (grindingFaction) {
+    // shareIdleRAM (config override, toggle with tools/share-idle.js) forces share() to soak
+    // surplus RAM even when the (possibly locked) faction-manager reports no active grind.
+    const shareIdle = getConfig(ns).shareIdleRAM;
+    if (grindingFaction || shareIdle) {
       const shareRam = ns.getScriptRam("/src/share.js") || WORKER_RAM.WEAKEN;
       for (const server of workerServers) {
         if (server.freeRAM < shareRam) continue;
