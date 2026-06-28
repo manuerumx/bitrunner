@@ -106,3 +106,22 @@ export function isServerPrepped(ns, hostname) {
 export function maxBatches(availableRAM, batchRAM) {
   return Math.floor(availableRAM / batchRAM);
 }
+
+// How many HWGW batches to dispatch for one target in a single cycle.
+//
+// Batches start every `spacing * 4` ms (one full hack→weaken→grow→weaken landing sequence is
+// 4 * spacing wide), and each batch lives ~batchDuration. So `batchDuration / stride` batches are
+// in flight once the pipeline is full — call that one "wave". Dispatching `waves` of them pushes the
+// per-cycle income toward its ceiling (one batch's steal per stride): income/sec rises with depth
+// but the cycle lengthens too, so `waves` trades responsiveness for throughput. `maxBatches` caps
+// the result so a slow high-tier target can't stretch a single cycle into many minutes.
+export function hwgwBatchDepth(
+  batchDuration,
+  waves = DEFAULTS.hwgwBatchWaves,
+  maxBatchesPerTarget = DEFAULTS.hwgwMaxBatches,
+  spacing = DEFAULTS.batchSpacingMs
+) {
+  const stride = spacing * 4;
+  const pipelineDepth = Math.max(1, Math.ceil(batchDuration / stride));
+  return Math.min(maxBatchesPerTarget, pipelineDepth * Math.max(1, waves));
+}

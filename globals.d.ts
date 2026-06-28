@@ -17,6 +17,7 @@ declare global {
   type FactionName = Parameters<NS["sleeve"]["setToFactionWork"]>[1];
   type GymType = Parameters<NS["sleeve"]["setToGymWorkout"]>[2];
   type CrimeType = Parameters<NS["sleeve"]["setToCommitCrime"]>[1];
+  type HacknetServerHashUpgrade = Parameters<NS["hacknet"]["spendHashes"]>[0];
 
   // Port IPC payloads — the JSON shapes passed through the netscript ports listed in
   // constants.js PORTS. Writers and readers both annotate against these so the contract

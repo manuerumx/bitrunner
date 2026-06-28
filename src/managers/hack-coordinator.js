@@ -1,10 +1,10 @@
 import { scanNetwork } from "/src/lib/scanner.js";
-import { selectTargets } from "/src/lib/target-selector.js";
+import { selectTargets, selectXPTarget } from "/src/lib/target-selector.js";
 import { WORKER_RAM, DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { deployWorkers } from "/src/lib/deployer.js";
 import { readPortData } from "/src/lib/port-registry.js";
 import { getConfig } from "/src/lib/config.js";
-import { calculateBatch, isServerPrepped } from "/src/lib/batch-calculator.js";
+import { calculateBatch, isServerPrepped, hwgwBatchDepth } from "/src/lib/batch-calculator.js";
 import { log, formatMoney, formatTime, formatRAM } from "/src/lib/utils.js";
 
 function getAvailableRAM(ns, hostname) {
@@ -170,10 +170,16 @@ export async function main(ns) {
   ns.disableLog("ALL");
 
   while (true) {
+    const cfg = getConfig(ns);
+
     // Reclaim RAM held by the previous cycle's share() fillers (they loop forever) so the
     // income phases get first claim on the whole botnet again before we re-fill with share.
+    // share.js and xp.js both loop forever to soak surplus RAM (Phase 4); reclaim both so the
+    // income phases get first claim on the whole botnet again before we re-fill.
     for (const h of ["home", ...scanNetwork(ns)]) {
-      if (ns.hasRootAccess(h)) ns.scriptKill("/src/share.js", h);
+      if (!ns.hasRootAccess(h)) continue;
+      ns.scriptKill("/src/share.js", h);
+      ns.scriptKill("/src/xp.js", h);
     }
 
     const workerServers = getAllWorkerServers(ns);
@@ -218,7 +224,14 @@ export async function main(ns) {
       let batchCount = 0;
       let lastBatch = null;
 
-      for (let i = 0; i < 100; i++) {
+      // Self-size the pipeline to this target's batch timing instead of a flat 100. Slow high-tier
+      // targets get a deeper pipeline (the long weakenTime needs more batches to stay full); fast
+      // targets get a shallower one (and a shorter, more responsive cycle). RAM is still the hard
+      // limiter below — depthCap only bounds how far we *try* to go this cycle.
+      const probe = calculateBatch(ns, target.hostname, cfg.hackPercent);
+      const depthCap = hwgwBatchDepth(probe.batchDuration, cfg.hwgwBatchWaves, cfg.hwgwMaxBatches, cfg.batchSpacingMs);
+
+      for (let i = 0; i < depthCap; i++) {
         const result = runHWGWBatch(ns, target, workerServers, i);
         if (!result.dispatched) break;
         batchCount++;
@@ -313,46 +326,76 @@ export async function main(ns) {
     }
 
     // ──────────────────────────────────────────────
-    // Phase 4: Convert ALL leftover RAM into faction
-    //   reputation via share() — but ONLY while
-    //   actively grinding a faction (else share does
-    //   nothing useful). HWGW against a handful of
-    //   targets can't consume a large botnet, so this
-    //   is what keeps the surplus RAM productive.
+    // Phase 4: Soak ALL leftover RAM. HWGW against a
+    //   handful of targets can't consume a large
+    //   botnet, so this is what keeps the surplus
+    //   productive. Two mutually-exclusive uses:
+    //
+    //   xpFarmRAM (toggle: tools/xp-farm.js) → hacking
+    //     EXP via xp.js weaken-spam on the best EXP/sec
+    //     target. Use this when levelling is the goal.
+    //
+    //   else share() → faction reputation, but ONLY
+    //     while actively grinding a faction (share does
+    //     nothing otherwise). shareIdleRAM forces it on.
+    //
+    //   xpFarmRAM WINS when both could apply: share()
+    //   earns ZERO hacking EXP, so it's the thing that
+    //   stalls levelling on a big botnet.
     //
     //   We read faction-manager's status port instead
     //   of calling Singularity here (keeps this hot
-    //   manager's RAM low). share() loops forever, so
-    //   it's killed at the top of each cycle and
+    //   manager's RAM low). Both workers loop forever,
+    //   so they're killed at the top of each cycle and
     //   re-filled here on whatever the income phases
     //   left free.
     // ──────────────────────────────────────────────
     let shareThreads = 0;
-    const factionStatus = /** @type {FactionStatus | null} */ (readPortData(ns, PORTS.FACTION_STATUS));
-    const grindingFaction = !!(factionStatus && factionStatus.currentFaction && factionStatus.rep < factionStatus.targetRep);
-    // shareIdleRAM (config override, toggle with tools/share-idle.js) forces share() to soak
-    // surplus RAM even when the (possibly locked) faction-manager reports no active grind.
-    const shareIdle = getConfig(ns).shareIdleRAM;
-    if (grindingFaction || shareIdle) {
-      const shareRam = ns.getScriptRam("/src/share.js") || WORKER_RAM.WEAKEN;
-      for (const server of workerServers) {
-        if (server.freeRAM < shareRam) continue;
-        if (!ns.fileExists("/src/share.js", server.hostname)) deployWorkers(ns, server.hostname);
-        const threads = Math.floor(server.freeRAM / shareRam);
-        if (threads <= 0) continue;
-        const pid = ns.exec("/src/share.js", server.hostname, threads);
-        if (pid > 0) {
-          server.freeRAM -= threads * shareRam;
-          shareThreads += threads;
+    let xpThreads = 0;
+    if (cfg.xpFarmRAM) {
+      const xpTarget = selectXPTarget(ns);
+      if (xpTarget) {
+        const xpRam = ns.getScriptRam("/src/xp.js") || WORKER_RAM.GROW;
+        for (const server of workerServers) {
+          if (server.freeRAM < xpRam) continue;
+          if (!ns.fileExists("/src/xp.js", server.hostname)) deployWorkers(ns, server.hostname);
+          const threads = Math.floor(server.freeRAM / xpRam);
+          if (threads <= 0) continue;
+          const pid = ns.exec("/src/xp.js", server.hostname, threads, xpTarget.hostname);
+          if (pid > 0) {
+            server.freeRAM -= threads * xpRam;
+            xpThreads += threads;
+          }
         }
+        if (xpThreads > 0) summary.push(`xp:${xpThreads}t->${xpTarget.hostname}`);
       }
-      if (shareThreads > 0) summary.push(`share:${shareThreads}t`);
+    } else {
+      const factionStatus = /** @type {FactionStatus | null} */ (readPortData(ns, PORTS.FACTION_STATUS));
+      const grindingFaction = !!(factionStatus && factionStatus.currentFaction && factionStatus.rep < factionStatus.targetRep);
+      // shareIdleRAM (config override, toggle with tools/share-idle.js) forces share() to soak
+      // surplus RAM even when the (possibly locked) faction-manager reports no active grind.
+      const shareIdle = cfg.shareIdleRAM;
+      if (grindingFaction || shareIdle) {
+        const shareRam = ns.getScriptRam("/src/share.js") || WORKER_RAM.WEAKEN;
+        for (const server of workerServers) {
+          if (server.freeRAM < shareRam) continue;
+          if (!ns.fileExists("/src/share.js", server.hostname)) deployWorkers(ns, server.hostname);
+          const threads = Math.floor(server.freeRAM / shareRam);
+          if (threads <= 0) continue;
+          const pid = ns.exec("/src/share.js", server.hostname, threads);
+          if (pid > 0) {
+            server.freeRAM -= threads * shareRam;
+            shareThreads += threads;
+          }
+        }
+        if (shareThreads > 0) summary.push(`share:${shareThreads}t`);
+      }
     }
 
     // ──────────────────────────────────────────────
     // Logging
     // ──────────────────────────────────────────────
-    if (totalThreads > 0 || hwgwBlocked || shareThreads > 0) {
+    if (totalThreads > 0 || hwgwBlocked || shareThreads > 0 || xpThreads > 0) {
       const usedRAM = totalFreeRAM - poolFreeRAM(workerServers);
       const pct = totalFreeRAM > 0 ? ((usedRAM / totalFreeRAM) * 100).toFixed(0) : "0";
       if (hwgwBlocked && totalThreads === 0) {
@@ -389,9 +432,9 @@ export async function main(ns) {
       sleepTime = DEFAULTS.managerCycleMs;
     }
 
-    // If only share() ran this cycle, sleep longer so we don't churn kill+redispatch every
-    // few seconds (share keeps running during the sleep regardless).
-    if (shareThreads > 0 && hwgwCompletionTime === 0 && prepWeakenTime === 0) {
+    // If only the surplus-soak workers (share/xp) ran this cycle, sleep longer so we don't churn
+    // kill+redispatch every few seconds (they keep running during the sleep regardless).
+    if ((shareThreads > 0 || xpThreads > 0) && hwgwCompletionTime === 0 && prepWeakenTime === 0) {
       sleepTime = Math.max(sleepTime, 30000);
     }
 

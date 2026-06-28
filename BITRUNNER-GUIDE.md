@@ -18,6 +18,7 @@ A complete automation framework for [Bitburner](https://github.com/bitburner-off
    - [The Daemon](#the-daemon)
    - [Proto-Batch Mode](#proto-batch-mode)
    - [HWGW Batch Mode](#hwgw-batch-mode)
+   - [Surplus RAM: EXP vs Reputation](#surplus-ram-exp-vs-reputation)
    - [Inter-Script Communication](#inter-script-communication)
 5. [Game Progression Strategy](#game-progression-strategy)
 6. [Configuration](#configuration)
@@ -76,7 +77,7 @@ That's it. The daemon automatically launches managers based on available home RA
 
 ```
 src/
-├── hack.js, grow.js, weaken.js, share.js     ← Micro-workers
+├── hack.js, grow.js, weaken.js, share.js, xp.js  ← Micro-workers
 ├── daemon.js                                  ← Master orchestrator
 ├── lib/                                       ← Shared libraries
 │   ├── constants.js, utils.js, config.js
@@ -95,6 +96,7 @@ src/
     ├── monitor.js, analyze.js, deploy.js
     ├── nuke-all.js, find-contracts.js
     ├── backdoor.js, reset-prep.js
+    ├── hwgw-tune.js, xp-farm.js, share-idle.js  ← runtime config toggles
 ```
 
 ---
@@ -111,8 +113,9 @@ These are the smallest possible scripts. They run on every rooted server in the 
 | `grow.js` | ~1.75 GB | Increases money available on target |
 | `weaken.js` | ~1.75 GB | Reduces target's security level |
 | `share.js` | ~4.00 GB | Donates idle RAM to boost faction rep gain |
+| `xp.js` | ~1.75 GB | Loops `weaken()` forever on one target to farm hacking EXP |
 
-**Arguments**: `args[0]` = target hostname, `args[1]` = optional delay in ms (used for HWGW batch timing).
+**Arguments**: `args[0]` = target hostname, `args[1]` = optional delay in ms (used for HWGW batch timing). `share.js` and `xp.js` take no delay — they loop forever and are killed/re-filled by the hack-coordinator each cycle.
 
 You never run these manually — the hack-coordinator dispatches them via `ns.exec()`.
 
@@ -127,7 +130,7 @@ Shared code imported by managers and tools. These have no `main()` function and 
 | `lib/constants.js` | Game constants, port assignments, default config values, worker script paths |
 | `lib/utils.js` | Formatting helpers: `formatMoney()`, `formatRAM()`, `formatTime()`, `formatPercent()`, logging |
 | `lib/scanner.js` | BFS network scanner: `scanNetwork()`, `getServerDetails()`, `getAllServers()`, `getPath()` |
-| `lib/target-selector.js` | Ranks hackable servers by profitability score: `(maxMoney × hackChance × hackPercent) / weakenTime` |
+| `lib/target-selector.js` | Ranks hackable servers two ways: by money (`selectTargets`, score `maxMoney × chance / weakenTime^0.3`) and by hacking-EXP throughput (`selectXPTarget`, score `(3 + 0.3 × baseDifficulty) / weakenTime`) |
 | `lib/batch-calculator.js` | HWGW batch math: thread counts, timing offsets, prep requirements, server readiness check |
 | `lib/port-registry.js` | Port communication helpers: `writePortData()`, `readPortData()`, `consumePortData()` |
 | `lib/config.js` | Configuration loader: reads overrides from Port 5, merges with defaults |
@@ -149,6 +152,7 @@ Persistent daemons that run on the home server. Each handles one game subsystem 
   - **Proto-batch** (early game): Simple priority loop — weaken if security is high, grow if money is low, hack otherwise. Spreads work across all available RAM.
   - **HWGW batch** (mid/late game): Dispatches precision-timed Hack-Weaken-Grow-Weaken sequences that land 200ms apart, keeping the target at perfect conditions.
 - **Auto-switching**: Uses HWGW when the primary target is "prepped" (min security, max money) and enough RAM is available. Falls back to proto-batch otherwise.
+- **Surplus RAM**: HWGW against a handful of targets can't consume a large botnet, so leftover RAM is soaked each cycle — either by `xp.js` (hacking EXP) when `xpFarmRAM` is on, or by `share.js` (faction reputation) while grinding a faction. See [Surplus RAM: EXP vs Reputation](#surplus-ram-exp-vs-reputation).
 
 #### `managers/server-buyer.js` — Purchased Server Management
 - **Cycle**: Every 60 seconds
@@ -157,8 +161,9 @@ Persistent daemons that run on the home server. Each handles one game subsystem 
 
 #### `managers/hacknet-manager.js` — Hacknet Node Automation
 - **Cycle**: Every 10 seconds
-- **What it does**: Buys and upgrades hacknet nodes (level, RAM, cores) based on which upgrade has the lowest cost. Spends up to 10% of your money per cycle.
-- **Strategy**: Always picks the cheapest available upgrade — buy a new node or upgrade an existing one, whichever is cheaper.
+- **What it does**: Buys and upgrades hacknet nodes (level, RAM, cores) by best payback ratio, spending up to 10% of your money per cycle. On BitNodes with Hacknet **Servers**, it also spends accumulated **hashes** every cycle so they never cap out and waste.
+- **Money strategy**: Picks the upgrade with the lowest payback time (cost ÷ extra production), not the cheapest — and buys one new node per cycle so the node count keeps growing.
+- **Hash strategy**: Buys a capped number of *Reduce Minimum Security* + *Increase Maximum Money* on the richest rooted server each cycle (compounds HWGW yield), then drains everything left to *Sell for Money*. No-op when hashes don't exist (`hashCapacity() === 0`).
 
 #### `managers/prep-server.js` — Server Preparation
 - **Usage**: `run src/managers/prep-server.js <target>`
@@ -276,6 +281,29 @@ run src/tools/reset-prep.js
 ```
 Pre-augmentation reset report: sells all stocks, shows installed/pending augmentations, faction rep status, money summary. Use `run src/tools/reset-prep.js go` to install augmentations and trigger the soft reset.
 
+#### `tools/xp-farm.js` — Toggle the EXP Farm
+```
+run src/tools/xp-farm.js on     # surplus RAM → hacking EXP
+run src/tools/xp-farm.js off    # back to share() (faction rep)
+run src/tools/xp-farm.js        # toggle
+```
+Flips the `xpFarmRAM` config override (Port 5). When on, the hack-coordinator soaks all surplus RAM with `xp.js` (weaken-spam on the best EXP/sec target) instead of `share()`. Takes effect next cycle. See [Surplus RAM: EXP vs Reputation](#surplus-ram-exp-vs-reputation).
+
+#### `tools/share-idle.js` — Toggle Forced `share()`
+```
+run src/tools/share-idle.js on / off
+```
+Flips the `shareIdleRAM` override — forces `share()` to soak surplus RAM even when the faction-manager isn't reporting an active grind. Has no effect while the EXP farm is on (the EXP farm wins).
+
+#### `tools/hwgw-tune.js` — Tune HWGW Pipeline Depth
+```
+run src/tools/hwgw-tune.js                 # print current vs default
+run src/tools/hwgw-tune.js waves 6         # set hwgwBatchWaves
+run src/tools/hwgw-tune.js max 800         # set hwgwMaxBatches
+run src/tools/hwgw-tune.js reset           # clear overrides
+```
+Live-tunes how many HWGW batches the coordinator stacks per target per cycle. Higher = more income/sec but longer, less responsive cycles. RAM is still the hard limiter.
+
 ---
 
 ## How It Works
@@ -342,6 +370,21 @@ After all four land, the server is back to perfect conditions — ready for the 
 - `weaken2Threads`: Enough to counter grow's security increase
 
 Multiple batches can run concurrently on the same target, staggered by `batchSpacingMs × 4`.
+
+### Surplus RAM: EXP vs Reputation
+
+On a large botnet, HWGW saturates only a handful of targets — the rest of your RAM is surplus. Phase 4 of the hack-coordinator puts that surplus to work, but **`share()` and the XP farm compete for the same RAM**, so only one runs at a time:
+
+| Mode | Worker | Earns | Toggle |
+|------|--------|-------|--------|
+| **EXP farm** | `xp.js` | Hacking EXP (raises your level) | `tools/xp-farm.js on` |
+| **Reputation** | `share.js` | Faction rep (while working for a faction) | `tools/share-idle.js on`, or automatic while a faction grind is active |
+
+**Why this matters for EXP**: hacking EXP per thread is `3 + 0.3 × baseDifficulty` — driven by the target's *base* difficulty, **independent of money stolen and current security**. `share()` earns **zero** hacking EXP, so leaving it on while you want levels is what stalls EXP growth on a big botnet. When `xpFarmRAM` is on, it **wins** over `share()`.
+
+**Why the farm uses `weaken()`**: hack/grow/weaken all grant the same EXP per thread, so the only thing that matters is op time — and op time scales with the target's *current* security. `weaken()` is the only op that lowers security, so it pins the target at minimum and keeps op time at its floor (fastest, self-stabilizing). A grow/hack farm would instead slam the target to max security and run at its slowest rate forever. `selectXPTarget` then picks the server with the best EXP/sec = `(3 + 0.3 × baseDifficulty) / weakenTime`.
+
+**Rule of thumb**: turn the EXP farm **on** while you're pushing your hacking level; turn it **off** (and let `share()` run) while you're grinding faction reputation.
 
 ### Inter-Script Communication
 
@@ -433,8 +476,13 @@ ns.writePort(5, JSON.stringify({
 | `purchasedServerRAM` | 8 | Initial RAM for newly purchased servers (power of 2) |
 | `maxPurchasedServerRAM` | 1048576 | Maximum RAM to upgrade purchased servers to (1 PB) |
 | `hacknetBudgetPercent` | 0.1 | Max fraction of money to spend on hacknet per cycle |
+| `hashTargetUpgradesPerCycle` | 2 | Max purchases per cycle of each targeted hash upgrade (rest drained to money) |
 | `stockBudgetPercent` | 0.25 | Max fraction of money to invest in stocks per cycle |
 | `batchSpacingMs` | 200 | Milliseconds between HWGW batch landing times |
+| `hwgwBatchWaves` | 4 | HWGW pipeline depth multiplier per target (tune with `hwgw-tune.js`) |
+| `hwgwMaxBatches` | 500 | Hard cap on HWGW batches per target per cycle |
+| `xpFarmRAM` | false | Soak surplus RAM with the EXP farm instead of `share()` (toggle with `xp-farm.js`) |
+| `shareIdleRAM` | false | Force `share()` on surplus RAM even without an active faction grind (toggle with `share-idle.js`) |
 
 ### Tuning Tips
 
@@ -461,6 +509,13 @@ The primary target isn't at optimal conditions yet. This is normal — weakening
 
 ### No targets found
 Your hacking level is too low to hack any rooted servers, or no servers are rooted. Wait for your hacking level to rise, or manually hack in the terminal to gain XP.
+
+### Hacking level rising slowly
+On a large botnet, HWGW only saturates a few targets and the rest of your RAM goes to `share()` — which earns money/rep but **zero hacking EXP**. Turn on the EXP farm to convert that surplus into levels:
+```
+run src/tools/xp-farm.js on
+```
+This makes the coordinator weaken-spam the best EXP/sec server with all leftover RAM. Note that EXP depends on a target's *base difficulty*, not its money or current security — so money-farming progress and EXP progress are separate levers. Turn the farm off again when you switch back to grinding faction reputation. See [Surplus RAM: EXP vs Reputation](#surplus-ram-exp-vs-reputation).
 
 ### Stock trader exits immediately
 You need to purchase WSE Account and TIX API Access from the World Stock Exchange in-game. Total cost is approximately $30B.

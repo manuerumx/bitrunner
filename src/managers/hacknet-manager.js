@@ -1,5 +1,13 @@
 import { DEFAULTS } from "/src/lib/constants.js";
+import { scanNetwork } from "/src/lib/scanner.js";
 import { log, formatMoney } from "/src/lib/utils.js";
+
+// Hash upgrade names (see HacknetServerHashUpgrade in NetscriptDefinitions.d.ts). "Sell for Money" is
+// the universal drain; the targeted pair permanently buffs a server's HWGW yield.
+/** @type {HacknetServerHashUpgrade} */
+const HASH_TO_MONEY = "Sell for Money";
+/** @type {HacknetServerHashUpgrade[]} */
+const HASH_TARGET_UPGRADES = ["Reduce Minimum Security", "Increase Maximum Money"];
 
 // Relative production of a node given its stats. The constant gain-per-level (1.5)
 // and the player/BitNode multipliers scale every candidate equally, so they cancel
@@ -35,6 +43,61 @@ function getBestUpgrade(ns) {
   }
 
   return best;
+}
+
+// Richest rooted server — the best place to spend "Increase Maximum Money" / "Reduce Minimum
+// Security" hashes, since boosting it compounds HWGW income. maxMoney is a cheap proxy (no
+// hackAnalyze) that keeps this manager's RAM low.
+/** @param {NS} ns */
+export function bestHashTarget(ns) {
+  let best = null;
+  let bestMoney = 0;
+  for (const hostname of scanNetwork(ns)) {
+    if (!ns.hasRootAccess(hostname)) continue;
+    const money = ns.getServerMaxMoney(hostname);
+    if (money > bestMoney) {
+      bestMoney = money;
+      best = hostname;
+    }
+  }
+  return best;
+}
+
+// Spend accumulated hacknet-server hashes so they never cap out and waste. No-op on BitNodes without
+// hacknet servers — hashCapacity() is 0 there (the nodes produce money, not hashes), so this returns
+// immediately and the manager's money-upgrade logic is all that runs.
+/** @param {NS} ns */
+export function spendHashes(ns, perCycle = DEFAULTS.hashTargetUpgradesPerCycle) {
+  if (ns.hacknet.hashCapacity() <= 0) return { target: null, targeted: 0, money: 0 };
+
+  const available = new Set(ns.hacknet.getHashUpgrades());
+  let targeted = 0;
+  let money = 0;
+
+  // 1) Compound the richest server's HWGW yield — permanent, high-value buffs. Bounded per cycle so
+  //    we don't dump the whole reserve into one server; the money drain below mops up the rest.
+  const target = bestHashTarget(ns);
+  if (target) {
+    for (const name of HASH_TARGET_UPGRADES) {
+      if (!available.has(name)) continue;
+      for (let i = 0; i < perCycle; i++) {
+        if (ns.hacknet.numHashes() < ns.hacknet.hashCost(name)) break;
+        if (!ns.hacknet.spendHashes(name, target)) break; // false = unaffordable or already maxed
+        targeted++;
+      }
+    }
+  }
+
+  // 2) Drain everything left to money so hashes never cap out. "Sell for Money" is always available
+  //    and never wrong — it just feeds the cash economy (server-buyer, hacknet upgrades, stocks).
+  if (available.has(HASH_TO_MONEY)) {
+    while (ns.hacknet.numHashes() >= ns.hacknet.hashCost(HASH_TO_MONEY)) {
+      if (!ns.hacknet.spendHashes(HASH_TO_MONEY)) break;
+      money++;
+    }
+  }
+
+  return { target, targeted, money };
 }
 
 /** @param {NS} ns */
@@ -80,6 +143,16 @@ export async function main(ns) {
       }
       if (!success) break;
       spent += best.cost;
+    }
+
+    // Hashes are a separate currency from cash — spend them every cycle so a full hash bar (which
+    // silently wastes production) never sits idle. No-op unless this BitNode has hacknet servers.
+    const hash = spendHashes(ns);
+    if (hash.targeted > 0 || hash.money > 0) {
+      const parts = [];
+      if (hash.targeted > 0) parts.push(`${hash.targeted} target upgrade(s) on ${hash.target}`);
+      if (hash.money > 0) parts.push(`${hash.money}x ${HASH_TO_MONEY}`);
+      log(ns, `Hacknet: spent hashes — ${parts.join(", ")}`);
     }
 
     await ns.sleep(cycleMs);

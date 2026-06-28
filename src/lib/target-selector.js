@@ -53,3 +53,47 @@ export function selectTargets(ns, count = 1) {
   const ranked = rankTargets(ns, servers);
   return ranked.slice(0, count);
 }
+
+// Rank servers for a pure hacking-EXP farm (xp.js loops weaken() on the winner).
+//
+// EXP is driven by a DIFFERENT signal than money. Per thread per op the game grants
+// (3 + 0.3 * baseDifficulty) hacking EXP — keyed off the server's BASE difficulty (a constant),
+// NOT its current security, and NOT the money stolen. So the money-based rankTargets score above is
+// irrelevant here. What we actually want to maximize is EXP throughput per thread:
+//
+//     score = expPerOp / weakenTime = (3 + 0.3 * baseDifficulty) / weakenTime
+//
+// A high-baseDifficulty server pays more EXP per op but also has a longer weakenTime, so neither raw
+// difficulty nor raw speed wins outright — we divide one by the other and let the live game numbers
+// pick. We measure weakenTime (the farm worker uses weaken()), and because weaken keeps the target
+// pinned at min security, the measured time IS the farm's steady-state time — the ranking is accurate.
+// Money/prep state is ignored: weaken() pays full EXP on any rooted server regardless of its balance.
+/** @param {NS} ns */
+export function rankXPTargets(ns, hostnames) {
+  const playerHacking = ns.getHackingLevel();
+  const scored = [];
+
+  for (const hostname of hostnames) {
+    if (hostname === "home") continue;
+    if (!ns.hasRootAccess(hostname)) continue;
+    if (ns.getServerRequiredHackingLevel(hostname) > playerHacking) continue;
+
+    const weakenTime = ns.getWeakenTime(hostname);
+    if (!(weakenTime > 0)) continue;
+
+    const baseDifficulty = ns.getServerBaseSecurityLevel(hostname);
+    const expPerOp = 3 + 0.3 * baseDifficulty;
+    const score = expPerOp / weakenTime;
+
+    scored.push({ hostname, baseDifficulty, weakenTime, expPerOp, score });
+  }
+
+  scored.sort((a, b) => b.score - a.score);
+  return scored;
+}
+
+/** @param {NS} ns */
+export function selectXPTarget(ns) {
+  const ranked = rankXPTargets(ns, scanNetwork(ns));
+  return ranked[0] || null;
+}

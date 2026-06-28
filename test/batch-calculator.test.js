@@ -5,6 +5,7 @@ import {
   calculatePrepThreads,
   isServerPrepped,
   maxBatches,
+  hwgwBatchDepth,
 } from "/src/lib/batch-calculator.js";
 
 // Minimal deterministic stand-in for the parts of `ns` these functions touch.
@@ -80,6 +81,19 @@ test("calculateBatch produces HWGW timings that land in order", () => {
     b.growThreads * 1.75 +
     b.weakenAfterGrowThreads * 1.75;
   assert.ok(Math.abs(b.totalRAM - expectedRAM) < 1e-9);
+});
+
+test("hwgwBatchDepth scales depth with batch duration and waves", () => {
+  // stride = spacing * 4 = 800ms. One "wave" = ceil(batchDuration / stride).
+  // Fast target (1600ms): pipelineDepth = 2 -> 4 waves = 8 batches.
+  assert.equal(hwgwBatchDepth(1600, 4, 500, 200), 8);
+  // Slow high-tier target (80s): pipelineDepth = 100 -> 4 waves = 400 batches.
+  assert.equal(hwgwBatchDepth(80000, 4, 500, 200), 400);
+  // maxBatches caps the depth so one cycle can't run for many minutes.
+  assert.equal(hwgwBatchDepth(80000, 10, 500, 200), 500);
+  // Depth and waves both floor at 1 (a target always gets at least one batch).
+  assert.equal(hwgwBatchDepth(100, 4, 500, 200), 4); // pipelineDepth floored to 1
+  assert.equal(hwgwBatchDepth(1600, 0, 500, 200), 2); // waves floored to 1
 });
 
 test("calculatePrepThreads weakens an un-prepped server toward min", () => {
