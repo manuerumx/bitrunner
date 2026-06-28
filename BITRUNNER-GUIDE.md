@@ -95,7 +95,7 @@ src/
 └── tools/                                     ← Standalone utilities
     ├── monitor.js, analyze.js, deploy.js
     ├── nuke-all.js, find-contracts.js
-    ├── backdoor.js, reset-prep.js
+    ├── backdoor.js, backdoor-next.js, reset-prep.js
     ├── hwgw-tune.js, xp-farm.js, share-idle.js  ← runtime config toggles
 ```
 
@@ -280,6 +280,12 @@ Automatically connects to and backdoors every rootable server. Prioritizes facti
 run src/tools/reset-prep.js
 ```
 Pre-augmentation reset report: sells all stocks, shows installed/pending augmentations, faction rep status, money summary. Use `run src/tools/reset-prep.js go` to install augmentations and trigger the soft reset.
+
+#### `tools/backdoor-next.js` — Connect to the Next Server to Backdoor (no SF-4)
+```
+run src/tools/backdoor-next.js
+```
+For manual backdooring before you have the Singularity API. Finds the best server you can currently backdoor — rooted, your hacking level ≥ its requirement, and not already backdoored — prioritizing faction-invite servers (CSEC, avmnite-02h, I.I.I.I, run4theh111z), then easiest by required level. It **auto-connects** you to that server by injecting the `connect` chain into the terminal (so you just type `backdoor`), and always prints the full `home; connect …; backdoor` chain as a copy-paste fallback plus the list of other reachable targets. Re-run it after each backdoor to walk through them. `w0r1d_d43m0n` is never auto-connected (backdooring it ends the BitNode) — it's only ever shown with a warning.
 
 #### `tools/xp-farm.js` — Toggle the EXP Farm
 ```
