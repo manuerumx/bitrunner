@@ -146,6 +146,17 @@ test("Encryption II: Vigenère Cipher", () => {
   assert.equal(solve("Encryption II: Vigenère Cipher", ["ABCD", "B"]), "BCDE");
 });
 
+test("Total Number of Primes", () => {
+  assert.equal(solve("Total Number of Primes", [0, 20]), 8); // contract's own example
+  assert.equal(solve("Total Number of Primes", [0, 1]), 0); // 0 and 1 are not prime
+  assert.equal(solve("Total Number of Primes", [2, 2]), 1); // bounds are inclusive
+  assert.equal(solve("Total Number of Primes", [4, 4]), 0);
+  assert.equal(solve("Total Number of Primes", [10, 20]), 4); // 11, 13, 17, 19
+  assert.equal(solve("Total Number of Primes", [0, 1000000]), 78498); // known pi(10^6)
+  // High offset at the spec's upper bound: pi(5e6) - pi(4e6) = 348513 - 283146.
+  assert.equal(solve("Total Number of Primes", [4000000, 5000000]), 65367);
+});
+
 test("Shortest Path in a Grid", () => {
   assert.equal(solve("Shortest Path in a Grid", [[0, 0, 0], [0, 0, 0]]), "RRD");
   assert.equal(solve("Shortest Path in a Grid", [[0, 1], [1, 0]]), ""); // blocked

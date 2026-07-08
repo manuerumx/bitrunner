@@ -461,6 +461,31 @@ export const SOLVERS = {
     }).join("");
   },
 
+  "Total Number of Primes": (data) => {
+    const [low, high] = data;
+    if (high < 2) return 0;
+    // Segmented sieve: the segment is at most ~1e6 wide but bounds reach ~6e6, so sieve
+    // only [low, high] using base primes up to sqrt(high) instead of allocating 0..high.
+    const limit = Math.floor(Math.sqrt(high));
+    const isBasePrime = new Uint8Array(limit + 1).fill(1);
+    isBasePrime[0] = isBasePrime[1] = 0;
+    for (let p = 2; p * p <= limit; p++) {
+      if (!isBasePrime[p]) continue;
+      for (let m = p * p; m <= limit; m += p) isBasePrime[m] = 0;
+    }
+    const start = Math.max(low, 2);
+    const isPrime = new Uint8Array(high - start + 1).fill(1);
+    for (let p = 2; p <= limit; p++) {
+      if (!isBasePrime[p]) continue;
+      // First multiple of p in the segment, but never p itself.
+      let m = Math.max(p * p, Math.ceil(start / p) * p);
+      for (; m <= high; m += p) isPrime[m - start] = 0;
+    }
+    let count = 0;
+    for (let i = 0; i < isPrime.length; i++) count += isPrime[i];
+    return count;
+  },
+
   "Shortest Path in a Grid": (data) => {
     if (!data.length || !data[0].length) return "";
     const rows = data.length, cols = data[0].length;
@@ -537,6 +562,7 @@ export async function main(ns) {
 
         if (!solver) {
           skipped++;
+          log(ns, `New contract type ${type} located on ${hostname}`)
           continue;
         }
 
