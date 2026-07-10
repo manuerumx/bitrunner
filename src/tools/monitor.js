@@ -1,5 +1,6 @@
 import { scanNetwork, getServerDetails } from "/src/lib/scanner.js";
 import { selectTargets } from "/src/lib/target-selector.js";
+import { getConfig } from "/src/lib/config.js";
 import { formatMoney, formatRAM, formatPercent, formatTime } from "/src/lib/utils.js";
 
 /** @param {NS} ns */
@@ -20,11 +21,21 @@ export async function main(ns) {
 
     const hostnames = scanNetwork(ns);
     let rootedCount = 0, totalNetRAM = 0, usedNetRAM = 0;
+    let xpThreads = 0, shareThreads = 0;
+    const countSurplusWorkers = (h) => {
+      for (const p of ns.ps(h)) {
+        const base = p.filename.split("/").pop();
+        if (base === "xp.js") xpThreads += p.threads;
+        else if (base === "share.js") shareThreads += p.threads;
+      }
+    };
+    countSurplusWorkers("home");
     for (const h of hostnames) {
       if (ns.hasRootAccess(h)) {
         rootedCount++;
         totalNetRAM += ns.getServerMaxRam(h);
         usedNetRAM += ns.getServerUsedRam(h);
+        countSurplusWorkers(h);
       }
     }
 
@@ -58,6 +69,18 @@ export async function main(ns) {
       const rams = purchased.map((h) => ns.getServerMaxRam(h)).sort((a, b) => a - b);
       ns.print(`  Purch RAM: ${formatRAM(rams[0])} - ${formatRAM(rams[rams.length - 1])}`);
     }
+
+    // Surplus-RAM modes (config-overrides port): what the toggle says vs what's actually running.
+    const cfg = getConfig(ns);
+    ns.print("");
+    ns.print("── Surplus RAM ──");
+    ns.print(`  XP farm:   ${cfg.xpFarmRAM ? `▶ ON  (${xpThreads} threads)` : "· OFF"}`);
+    const shareState = cfg.shareIdleRAM
+      ? `▶ ON  (${shareThreads} threads, forced)`
+      : shareThreads > 0
+        ? `▶ ON  (${shareThreads} threads, faction grind)`
+        : "· OFF";
+    ns.print(`  Share:     ${shareState}`);
 
     ns.print("");
     ns.print("── Top Targets ──");

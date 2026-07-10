@@ -1,5 +1,6 @@
 import { log, tlog, formatMoney, formatRAM } from "/src/lib/utils.js";
 import { scanNetwork } from "/src/lib/scanner.js";
+import { getConfig } from "/src/lib/config.js";
 
 const MANAGERS = [
   { script: "/src/managers/hack-coordinator.js", name: "Hack Coordinator", priority: 1, phase: 1 },
@@ -135,6 +136,7 @@ export async function main(ns) {
     const hackLevel = ns.getHackingLevel();
     const freeRAM = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
     const net = getNetworkStats(ns);
+    const cfg = getConfig(ns); // surplus-RAM toggles live on the config-overrides port (0 GB peek)
 
     ns.clearLog();
     ns.print("╔══════════════════════════════════╗");
@@ -148,6 +150,9 @@ export async function main(ns) {
     ns.print(`  Servers: ${net.rootedCount}/${net.totalServers} rooted | ${net.backdooredCount} backdoored`);
     ns.print(`  Botnet:  ${formatRAM(net.totalRAM - net.usedRAM)} free / ${formatRAM(net.totalRAM)}`);
     ns.print(`  Purchased: ${net.purchasedServers}/25 | Hacknet: ${net.hacknetNodes}`);
+    ns.print("");
+    ns.print(`── Modes ──`);
+    ns.print(`  XP farm: ${cfg.xpFarmRAM ? "▶ ON" : "· off"} | Share idle: ${cfg.shareIdleRAM ? "▶ ON" : "· off"}`);
     ns.print("");
     ns.print(`── Managers ──`);
     for (const manager of sortedManagers) {

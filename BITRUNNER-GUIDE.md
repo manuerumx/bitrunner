@@ -237,6 +237,7 @@ Opens a tail window showing:
 - Home RAM usage
 - Network stats (rooted servers, botnet RAM utilization)
 - Purchased servers and hacknet nodes
+- Surplus-RAM modes: XP-farm and share() toggle state, plus live `xp.js`/`share.js` thread counts across home + botnet
 - Top 5 hacking targets with security/money status
 - All running scripts on home with thread counts
 
