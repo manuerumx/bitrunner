@@ -61,9 +61,12 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 | `run src/tools/backdoor.js` | none | SF-4 | Auto-connects and backdoors every rootable server (faction servers first). |
 | `run src/tools/deploy.js` | none | — | Copies the worker scripts to every rooted server. (Rooter does this automatically.) |
 | `run src/tools/nuke-all.js` | none | — | One-shot: opens ports and nukes every server you can root right now. |
+| `run src/tools/rename-servers.js` | none | — | One-shot: renames old `bitrunner-#` purchased servers to scientist names (see below). Kills a busy server's scripts if needed; the coordinator redeploys them next cycle. |
 | `run src/managers/prep-server.js <target>` | hostname | — | Manually weaken/grow one target to min-security/max-money. Exits when prepped. |
 
 `analyze.js`, `connect.js`, and `prep-server.js` **require a hostname argument** — running them bare just prints usage.
+
+> 🧑‍🔬 **Fun note:** purchased servers are named after famous computer scientists — `turing`, `lovelace`, `hopper`, `dijkstra`, `von-neumann`… The server-buyer picks a random unused name from the hall of fame in `src/lib/server-names.js`, so your botnet reads like a CS syllabus. If the list ever runs dry, the game appends a number (`knuth-0`) and life goes on.
 
 ---
 

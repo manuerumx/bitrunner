@@ -1,12 +1,12 @@
 import { DEFAULTS } from "/src/lib/constants.js";
 import { deployWorkers } from "/src/lib/deployer.js";
+import { pickServerName } from "/src/lib/server-names.js";
 import { log, formatMoney, formatRAM } from "/src/lib/utils.js";
 
 /** @param {NS} ns */
 export async function main(ns) {
   ns.disableLog("ALL");
   const cycleMs = DEFAULTS.serverBuyerCycleMs;
-  const prefix = "bitrunner-";
 
   while (true) {
     const money = ns.getPlayer().money;
@@ -22,7 +22,7 @@ export async function main(ns) {
           targetRAM *= 2;
         }
 
-        const hostname = ns.cloud.purchaseServer(prefix + owned.length, targetRAM);
+        const hostname = ns.cloud.purchaseServer(pickServerName(owned), targetRAM);
         if (hostname) {
           deployWorkers(ns, hostname);
           log(ns, `BOUGHT: ${hostname} (${formatRAM(targetRAM)}) for ${formatMoney(ns.cloud.getServerCost(targetRAM))}`);
