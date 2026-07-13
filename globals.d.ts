@@ -57,6 +57,25 @@ declare global {
     code: number;
     message: string;
   }
+  // One probe-worker's view of its darknet neighborhood: cracking intel per neighbor.
+  // Written by tools/darknet-probe-worker.js, consumed by tools/darknet-scan.js.
+  interface ProbeReport {
+    from: string;
+    neighbors: Record<
+      string,
+      {
+        depth: number;
+        difficulty: number;
+        hint: string;
+        data: string;
+        passwordFormat: string;
+        passwordLength: number;
+        requiredCharisma: number;
+        isStationary: boolean;
+        isOnline: boolean;
+      }
+    >;
+  }
 }
 
 export {};

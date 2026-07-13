@@ -17,6 +17,17 @@ export function writePortData(ns, portNum, data) {
 }
 
 /**
+ * Append a payload to a port WITHOUT clearing it — queue semantics, for many writers
+ * feeding one consumer (vs writePortData's latest-state semantics).
+ * @param {NS} ns
+ * @param {number} portNum
+ * @param {*} data  Annotate the caller's object against its port payload type.
+ */
+export function pushPortData(ns, portNum, data) {
+  ns.writePort(portNum, JSON.stringify(data));
+}
+
+/**
  * Peek the latest payload on a port without consuming it.
  * @param {NS} ns
  * @param {number} portNum

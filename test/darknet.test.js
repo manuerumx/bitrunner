@@ -2,8 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildCandidate,
+  mergeDarknetMap,
+  parseDarknetMap,
   parsePasswordStore,
+  pickCrawlHosts,
   planStasisLinks,
+  PROBE_WORKER_RAM,
   STASIS_WORKER_RAM,
 } from "/src/lib/darknet.js";
 
@@ -201,4 +205,89 @@ test("buildCandidate treats a missing game server as a zero-RAM candidate", () =
   assert.equal(c.freeRam, 0);
   assert.equal(c.canExec, false);
   assert.equal(c.hasPassword, false);
+});
+
+// ── parseDarknetMap ─────────────────────────────────────────────────────────
+
+test("parseDarknetMap parses a JSON object and tolerates garbage like the password store", () => {
+  const map = { "dn-alpha": { depth: 2, hint: "favorite pet" } };
+  assert.deepEqual(parseDarknetMap(JSON.stringify(map)), map);
+  assert.deepEqual(parseDarknetMap(""), {});
+  assert.deepEqual(parseDarknetMap("nope"), {});
+  assert.deepEqual(parseDarknetMap("[]"), {});
+});
+
+// ── mergeDarknetMap ─────────────────────────────────────────────────────────
+
+// Probe-worker report shape: which server it ran on, and what it saw next door.
+function report(from, neighbors) {
+  return { from, neighbors };
+}
+
+const alphaDetails = {
+  depth: 1,
+  difficulty: 7,
+  hint: "the founder's cat",
+  data: "",
+  passwordFormat: "alphabetic",
+  passwordLength: 8,
+  requiredCharisma: 50,
+  isStationary: false,
+  isOnline: true,
+};
+
+test("mergeDarknetMap adds newly discovered hosts and reports them as new", () => {
+  const { map, newHosts } = mergeDarknetMap({}, [report("darkweb", { "dn-alpha": alphaDetails })]);
+  assert.deepEqual(newHosts, ["dn-alpha"]);
+  assert.equal(map["dn-alpha"].hint, "the founder's cat");
+  assert.equal(map["dn-alpha"].seenFrom, "darkweb");
+  // The prober itself gets its neighbor list recorded.
+  assert.deepEqual(map["darkweb"].neighbors, ["dn-alpha"]);
+});
+
+test("mergeDarknetMap updates known hosts in place and keeps unseen hosts", () => {
+  const existing = {
+    "dn-alpha": { ...alphaDetails, depth: 1, seenFrom: "darkweb" },
+    "dn-elsewhere": { depth: 9, hint: "old intel" },
+  };
+  const { map, newHosts } = mergeDarknetMap(existing, [
+    report("darkweb", { "dn-alpha": { ...alphaDetails, depth: 3 } }),
+  ]);
+  assert.deepEqual(newHosts, []);
+  assert.equal(map["dn-alpha"].depth, 3);
+  // A host nobody probed this round is stale, not gone — the net just mutated around it.
+  assert.equal(map["dn-elsewhere"].hint, "old intel");
+});
+
+test("mergeDarknetMap merges multiple reports and counts a twice-seen new host once", () => {
+  const { map, newHosts } = mergeDarknetMap({}, [
+    report("dn-a", { "dn-shared": { ...alphaDetails, depth: 2 } }),
+    report("dn-b", { "dn-shared": { ...alphaDetails, depth: 2 }, "dn-only-b": alphaDetails }),
+  ]);
+  assert.deepEqual(newHosts, ["dn-shared", "dn-only-b"]);
+  assert.deepEqual(map["dn-a"].neighbors, ["dn-shared"]);
+  assert.deepEqual(map["dn-b"].neighbors, ["dn-shared", "dn-only-b"]);
+});
+
+// ── pickCrawlHosts ──────────────────────────────────────────────────────────
+
+test("pickCrawlHosts takes only online, exec-able servers with a password and probe-worker room", () => {
+  const picked = pickCrawlHosts(
+    [
+      cand("ok"),
+      cand("offline", { isOnline: false }),
+      cand("no-pw", { hasPassword: false }),
+      cand("no-route", { canExec: false }),
+      cand("cramped", { freeRam: PROBE_WORKER_RAM - 0.1 }),
+    ],
+    PROBE_WORKER_RAM
+  );
+  assert.deepEqual(
+    picked.map((c) => c.hostname),
+    ["ok"]
+  );
+});
+
+test("probe worker RAM is the 1.6 GB base plus probe (0.2) and getServerDetails (0.1)", () => {
+  assert.equal(PROBE_WORKER_RAM, 1.9);
 });

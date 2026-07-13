@@ -10,8 +10,16 @@
 // re-authenticates from the store).
 export const PASSWORD_FILE = "/data/darknet-passwords.txt";
 
+// Everything darknet-scan.js has learned about the net: per-host cracking intel
+// (password hint/format/length, required charisma) plus last-seen topology. Stale
+// entries stay — a host nobody probed this round has merely mutated out of view.
+export const MAP_FILE = "/data/darknet-map.txt";
+
 // stasis-worker.js: 1.6 GB script base + 12 GB for ns.dnet.setStasisLink().
 export const STASIS_WORKER_RAM = 13.6;
+
+// darknet-probe-worker.js: 1.6 GB base + probe (0.2) + getServerDetails (0.1).
+export const PROBE_WORKER_RAM = 1.9;
 
 // Order matters: the first failing check names the reason, so reasons stay stable for
 // tests and for the tool's status output.
@@ -91,12 +99,11 @@ export function buildCandidate(hostname, details, server, { hasPassword, isLinke
 }
 
 /**
- * Parse the password store file's contents. Empty/corrupt file → empty store, so a
+ * Tolerant parse for our JSON data files: empty/corrupt content → empty object, so a
  * missing file is never fatal.
  * @param {string | null} raw
- * @returns {Record<string, string>}
  */
-export function parsePasswordStore(raw) {
+function parseJsonObject(raw) {
   if (!raw) return {};
   try {
     const parsed = JSON.parse(raw);
@@ -105,6 +112,58 @@ export function parsePasswordStore(raw) {
     // fall through
   }
   return {};
+}
+
+/**
+ * Parse the password store file's contents.
+ * @param {string | null} raw
+ * @returns {Record<string, string>}
+ */
+export function parsePasswordStore(raw) {
+  return parseJsonObject(raw);
+}
+
+/**
+ * Parse the darknet map file's contents.
+ * @param {string | null} raw
+ * @returns {Record<string, any>}
+ */
+export function parseDarknetMap(raw) {
+  return parseJsonObject(raw);
+}
+
+/**
+ * Fold probe-worker reports into the map. The prober's own entry gets its fresh
+ * neighbor list; each neighbor's intel is upserted. Hosts absent from every report are
+ * left alone — the net mutating them out of view is not evidence they're gone.
+ *
+ * @param {Record<string, any>} existing
+ * @param {Array<{from: string, neighbors: Record<string, any>}>} reports
+ * @returns {{map: Record<string, any>, newHosts: string[]}}
+ */
+export function mergeDarknetMap(existing, reports) {
+  const map = { ...existing };
+  const newHosts = [];
+  for (const r of reports) {
+    map[r.from] = { ...map[r.from], neighbors: Object.keys(r.neighbors) };
+    for (const [host, details] of Object.entries(r.neighbors)) {
+      if (!(host in map)) newHosts.push(host);
+      map[host] = { ...map[host], ...details, seenFrom: r.from };
+    }
+  }
+  return { map, newHosts };
+}
+
+/**
+ * Which known servers can run the probe worker right now: same exec rules as the
+ * stasis worker, just a much smaller RAM bill.
+ * @param {ReturnType<typeof buildCandidate>[]} candidates
+ * @param {number} ramNeeded
+ */
+export function pickCrawlHosts(candidates, ramNeeded = PROBE_WORKER_RAM) {
+  return candidates.filter(
+    (c) => c.isOnline && c.hasPassword && c.canExec && c.freeRam >= ramNeeded
+  );
 }
 
 /** @param {NS} ns */
@@ -119,17 +178,29 @@ export function savePassword(ns, host, password) {
   ns.write(PASSWORD_FILE, JSON.stringify(store, null, 2), "w");
 }
 
+/** @param {NS} ns */
+export function loadDarknetMap(ns) {
+  return parseDarknetMap(ns.read(MAP_FILE));
+}
+
+/** @param {NS} ns */
+export function saveDarknetMap(ns, map) {
+  ns.write(MAP_FILE, JSON.stringify(map, null, 2), "w");
+}
+
 /**
  * Candidate details for every darknet server we know about: password-store entries,
- * currently linked servers, and any extras. A host the dnet API no longer recognizes
- * becomes an offline stub so status output can still show what happened to it.
+ * currently linked servers, everything darknet-scan.js has mapped, and any extras. A
+ * host the dnet API no longer recognizes becomes an offline stub so status output can
+ * still show what happened to it.
  * @param {NS} ns
  * @param {string[]} extraHosts
  */
 export function getStasisCandidates(ns, extraHosts = []) {
   const store = loadPasswords(ns);
   const linked = ns.dnet.getStasisLinkedServers();
-  const hosts = [...new Set([...Object.keys(store), ...linked, ...extraHosts])];
+  const mapped = Object.keys(loadDarknetMap(ns));
+  const hosts = [...new Set([...Object.keys(store), ...linked, ...mapped, ...extraHosts])];
   return hosts.map((host) => {
     let details;
     try {

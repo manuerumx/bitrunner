@@ -97,7 +97,8 @@ src/
     ├── nuke-all.js, find-contracts.js
     ├── backdoor.js, backdoor-next.js, reset-prep.js
     ├── hwgw-tune.js, xp-farm.js, share-idle.js  ← runtime config toggles
-    └── stasis.js, stasis-worker.js             ← darknet stasis links
+    ├── stasis.js, stasis-worker.js             ← darknet stasis links
+    └── darknet-scan.js, darknet-probe-worker.js ← darknet mapping & cracking intel
 ```
 
 ---
@@ -135,7 +136,7 @@ Shared code imported by managers and tools. These have no `main()` function and 
 | `lib/batch-calculator.js` | HWGW batch math: thread counts, timing offsets, prep requirements, server readiness check |
 | `lib/port-registry.js` | Port communication helpers: `writePortData()`, `readPortData()`, `consumePortData()` |
 | `lib/config.js` | Configuration loader: reads overrides from Port 5, merges with defaults |
-| `lib/darknet.js` | Darknet (`ns.dnet`) plumbing: password store (`/data/darknet-passwords.txt`), stasis-link planner (`planStasisLinks()`), candidate builder |
+| `lib/darknet.js` | Darknet (`ns.dnet`) plumbing: password store (`/data/darknet-passwords.txt`), server map (`/data/darknet-map.txt`), stasis-link planner (`planStasisLinks()`), map merger (`mergeDarknetMap()`), candidate builder |
 
 ---
 
@@ -326,8 +327,17 @@ Darknet servers mutate on a cycle: they move, restart (killing your scripts), or
 Mechanics worth knowing:
 - `setStasisLink()` only acts on the server the script is running on, so `stasis.js` authenticates (`connectToSession`), copies `stasis-worker.js` over, and execs it there. The worker needs **13.6 GB free** on the target (1.6 base + 12 for the call) and reports its verdict back on Port 11.
 - Remote exec on a darknet server requires a session **plus** a route: direct connection, backdoor, or an existing stasis link.
-- Sessions are per-PID, so every run re-authenticates from the password store at `/data/darknet-passwords.txt` (host → password JSON). The store doubles as our registry of known darknet servers; seed it with `stasis.js link <host> <password>`.
+- Sessions are per-PID, so every run re-authenticates from the password store at `/data/darknet-passwords.txt` (host → password JSON). The store doubles as our registry of known darknet servers; `tools/darknet-scan.js` grows it and status/auto pick up everything it maps.
 - If the worker doesn't fit but the owner is hogging RAM, the status output says so — free it with `ns.dnet.memoryReallocation()`.
+
+#### `tools/darknet-scan.js` — Darknet Mapping & Cracking Intel
+```
+run src/tools/darknet-scan.js              # crawl, update /data/darknet-map.txt, print discoveries
+run src/tools/darknet-scan.js intel        # cracking intel for every uncracked server, shallow first
+```
+`ns.dnet.probe()` only sees the *current* server's neighbors, so the darknet can only be mapped from within. The scan probes from home, then ships a 1.9 GB probe worker (base 1.6 + probe 0.2 + getServerDetails 0.1) to every known server we can exec on and merges all reports — reports travel back on Port 12 with queue semantics so they can't clobber each other. Each mapped server records its cracking intel: password hint, format and length, required heartbleed charisma, depth, difficulty. Stale map entries are kept — a server that mutated out of view isn't necessarily gone.
+
+Mapped servers flow into `stasis.js` automatically (they show up as `no-password` candidates until cracked). The passwords themselves stay a human job — hints are puzzles by design. The loop is: **scan → read intel → crack → `stasis.js link` → `stasis.js auto` → scan deeper from the newly linked server.**
 
 ---
 
@@ -424,6 +434,7 @@ Scripts communicate via **Netscript ports** (JSON-serialized data):
 | 5 | Runtime configuration overrides | user/daemon → all managers |
 | 6-10 | Subsystem status reports | advanced managers → daemon |
 | 11 | Stasis-link verdicts | stasis-worker (on darknet server) → stasis.js |
+| 12 | Probe reports (queued, not cleared) | darknet-probe-worker (on darknet servers) → darknet-scan.js |
 
 **Port protocol**: All data is `JSON.stringify()`'d on write and `JSON.parse()`'d on read. Status ports use `ns.peek()` (non-destructive) for polling; command ports use `ns.readPort()` (consuming).
 
