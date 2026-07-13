@@ -48,6 +48,15 @@ export async function main(ns) {
       hacknetProd += ns.hacknet.getNodeStats(i).production;
     }
 
+    // Darknet stasis links — the API is locked until you have darknet access, so the
+    // whole line is simply omitted when ns.dnet throws.
+    let stasis = null;
+    try {
+      stasis = { linked: ns.dnet.getStasisLinkedServers(), limit: ns.dnet.getStasisLinkLimit() };
+    } catch {
+      // no darknet access yet
+    }
+
     const targets = selectTargets(ns, 5);
 
     ns.clearLog();
@@ -64,6 +73,10 @@ export async function main(ns) {
     ns.print(`  Botnet:    ${formatRAM(usedNetRAM)} / ${formatRAM(totalNetRAM)} (${formatPercent(totalNetRAM > 0 ? usedNetRAM / totalNetRAM : 0)})`);
     ns.print(`  Purchased: ${purchased.length} / 25`);
     ns.print(`  Hacknet:   ${hacknetNodes} nodes (${formatMoney(hacknetProd)}/s)`);
+    if (stasis) {
+      const names = stasis.linked.length > 0 ? ` (${stasis.linked.join(", ")})` : "";
+      ns.print(`  Stasis:    ${stasis.linked.length} / ${stasis.limit} links${names}`);
+    }
 
     if (purchased.length > 0) {
       const rams = purchased.map((h) => ns.getServerMaxRam(h)).sort((a, b) => a - b);

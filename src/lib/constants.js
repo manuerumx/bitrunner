@@ -9,6 +9,7 @@ export const PORTS = {
   GANG_STATUS: 8,
   CORP_STATUS: 9,
   BLADEBURNER_STATUS: 10,
+  DNET_STASIS: 11,
 };
 
 export const WORKER_SCRIPTS = ["/src/hack.js", "/src/grow.js", "/src/weaken.js", "/src/share.js", "/src/xp.js"];

@@ -49,6 +49,14 @@ declare global {
     stamina: string;
     skillPoints: number;
   }
+  // Written by tools/stasis-worker.js from the darknet server, consumed by tools/stasis.js.
+  interface StasisResult {
+    host: string;
+    mode: "link" | "unlink";
+    success: boolean;
+    code: number;
+    message: string;
+  }
 }
 
 export {};

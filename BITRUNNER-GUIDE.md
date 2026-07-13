@@ -97,6 +97,7 @@ src/
     ├── nuke-all.js, find-contracts.js
     ├── backdoor.js, backdoor-next.js, reset-prep.js
     ├── hwgw-tune.js, xp-farm.js, share-idle.js  ← runtime config toggles
+    └── stasis.js, stasis-worker.js             ← darknet stasis links
 ```
 
 ---
@@ -134,6 +135,7 @@ Shared code imported by managers and tools. These have no `main()` function and 
 | `lib/batch-calculator.js` | HWGW batch math: thread counts, timing offsets, prep requirements, server readiness check |
 | `lib/port-registry.js` | Port communication helpers: `writePortData()`, `readPortData()`, `consumePortData()` |
 | `lib/config.js` | Configuration loader: reads overrides from Port 5, merges with defaults |
+| `lib/darknet.js` | Darknet (`ns.dnet`) plumbing: password store (`/data/darknet-passwords.txt`), stasis-link planner (`planStasisLinks()`), candidate builder |
 
 ---
 
@@ -237,6 +239,7 @@ Opens a tail window showing:
 - Home RAM usage
 - Network stats (rooted servers, botnet RAM utilization)
 - Purchased servers and hacknet nodes
+- Darknet stasis links in use vs the global limit (hidden until you have darknet access)
 - Surplus-RAM modes: XP-farm and share() toggle state, plus live `xp.js`/`share.js` thread counts across home + botnet
 - Top 5 hacking targets with security/money status
 - All running scripts on home with thread counts
@@ -310,6 +313,21 @@ run src/tools/hwgw-tune.js max 800         # set hwgwMaxBatches
 run src/tools/hwgw-tune.js reset           # clear overrides
 ```
 Live-tunes how many HWGW batches the coordinator stacks per target per cycle. Higher = more income/sec but longer, less responsive cycles. RAM is still the hard limiter.
+
+#### `tools/stasis.js` — Darknet Stasis Links
+```
+run src/tools/stasis.js                    # status: links vs limit, candidates, skip reasons
+run src/tools/stasis.js auto               # fill every free slot with the best candidates
+run src/tools/stasis.js link n00dles-dk hunter2   # link one server (password saved on success)
+run src/tools/stasis.js unlink n00dles-dk  # remove a link, freeing a global slot
+```
+Darknet servers mutate on a cycle: they move, restart (killing your scripts), or go offline — often permanently. A stasis link (`ns.dnet.setStasisLink()`) pins a server in place and doubles as a permanent remote-exec route to it. Links are globally capped (`getStasisLinkLimit()`, raised by deep-darknet augmentations), so `lib/darknet.js` plans which servers deserve a slot: deepest first (hardest to re-find), then highest difficulty. Stationary story servers are skipped — they can't move, so a link there is wasted.
+
+Mechanics worth knowing:
+- `setStasisLink()` only acts on the server the script is running on, so `stasis.js` authenticates (`connectToSession`), copies `stasis-worker.js` over, and execs it there. The worker needs **13.6 GB free** on the target (1.6 base + 12 for the call) and reports its verdict back on Port 11.
+- Remote exec on a darknet server requires a session **plus** a route: direct connection, backdoor, or an existing stasis link.
+- Sessions are per-PID, so every run re-authenticates from the password store at `/data/darknet-passwords.txt` (host → password JSON). The store doubles as our registry of known darknet servers; seed it with `stasis.js link <host> <password>`.
+- If the worker doesn't fit but the owner is hogging RAM, the status output says so — free it with `ns.dnet.memoryReallocation()`.
 
 ---
 
@@ -405,6 +423,7 @@ Scripts communicate via **Netscript ports** (JSON-serialized data):
 | 4 | General data feed | all managers → monitor |
 | 5 | Runtime configuration overrides | user/daemon → all managers |
 | 6-10 | Subsystem status reports | advanced managers → daemon |
+| 11 | Stasis-link verdicts | stasis-worker (on darknet server) → stasis.js |
 
 **Port protocol**: All data is `JSON.stringify()`'d on write and `JSON.parse()`'d on read. Status ports use `ns.peek()` (non-destructive) for polling; command ports use `ns.readPort()` (consuming).
 
