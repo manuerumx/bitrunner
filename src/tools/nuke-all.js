@@ -5,6 +5,16 @@ import { tlog, formatRAM, formatMoney } from "/src/lib/utils.js";
 
 /** @param {NS} ns */
 export async function main(ns) {
+  // Literal ns.<fn> references so the static RAM analyzer charges for each
+  // port opener; a dynamic map lookup on ns would run but under-allocate by
+  // 0.25GB and get the script killed at the first call past the budget.
+  const crackers = {
+    brutessh: ns.brutessh,
+    ftpcrack: ns.ftpcrack,
+    relaysmtp: ns.relaysmtp,
+    httpworm: ns.httpworm,
+    sqlinject: ns.sqlinject,
+  };
   const programs = PROGRAMS.filter((p) => ns.fileExists(p.name, "home"));
   const hostnames = scanNetwork(ns);
   let rooted = 0;
@@ -19,7 +29,7 @@ export async function main(ns) {
     // Rooting only needs the port programs, NOT a sufficient hacking level (that only gates
     // ns.hack). Skipping high-level servers here left rootable grow/weaken RAM unclaimed.
     for (const prog of programs) {
-      try { ns[prog.fn](hostname); } catch {}
+      try { crackers[prog.fn](hostname); } catch {}
     }
 
     const updated = ns.getServer(hostname);

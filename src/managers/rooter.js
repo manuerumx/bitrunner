@@ -8,10 +8,20 @@ function getAvailablePrograms(ns) {
 }
 
 function openPorts(ns, hostname, programs) {
+  // Literal ns.<fn> references so the static RAM analyzer charges for each
+  // port opener; a dynamic map lookup on ns would run but under-allocate and
+  // kill the daemon the first time it roots a host needing all five ports.
+  const crackers = {
+    brutessh: ns.brutessh,
+    ftpcrack: ns.ftpcrack,
+    relaysmtp: ns.relaysmtp,
+    httpworm: ns.httpworm,
+    sqlinject: ns.sqlinject,
+  };
   let opened = 0;
   for (const prog of programs) {
     try {
-      ns[prog.fn](hostname);
+      crackers[prog.fn](hostname);
       opened++;
     } catch {
       // program may already have opened this port
