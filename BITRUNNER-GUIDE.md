@@ -96,6 +96,7 @@ src/
     ├── monitor.js, analyze.js, deploy.js
     ├── nuke-all.js, find-contracts.js
     ├── backdoor.js, backdoor-next.js, reset-prep.js
+    ├── list-augs.js                             ← augmentation catalog (SF-4)
     ├── hwgw-tune.js, xp-farm.js, share-idle.js  ← runtime config toggles
     ├── stasis.js, stasis-worker.js             ← darknet stasis links
     └── darknet-scan.js, darknet-probe-worker.js ← darknet mapping & cracking intel
@@ -279,6 +280,13 @@ Scans the entire network for coding contracts. Shows filename, server, contract 
 run src/tools/backdoor.js
 ```
 Automatically connects to and backdoors every rootable server. Prioritizes faction-critical servers (CSEC, avmnite-02h, I.I.I.I, run4theh111z).
+
+#### `tools/list-augs.js` — Augmentation Catalog (SF-4)
+```
+run src/tools/list-augs.js        # augs you don't own yet
+run src/tools/list-augs.js all    # include purchased/installed augs
+```
+Lists every augmentation offered by your joined factions — including ones you lack the reputation for (which `augmentation-buyer.js` hides). Each aug shows base price, rep requirement vs. your best faction's rep, stat multipliers, and unmet prerequisite augs. Tags: `READY` (buyable now), `NEED $`, `NEED REP`, `PENDING` (purchased, awaiting install), `INSTALLED`. NeuroFlux Governor is always listed since it's repurchasable.
 
 #### `tools/reset-prep.js` — Pre-Reset Checklist (SF-4)
 ```
