@@ -161,3 +161,25 @@ test("Shortest Path in a Grid", () => {
   assert.equal(solve("Shortest Path in a Grid", [[0, 0, 0], [0, 0, 0]]), "RRD");
   assert.equal(solve("Shortest Path in a Grid", [[0, 1], [1, 0]]), ""); // blocked
 });
+
+test("Square Root", () => {
+  assert.equal(solve("Square Root", 0n), "0");
+  assert.equal(solve("Square Root", 16n), "4"); // perfect square
+  assert.equal(solve("Square Root", 2n), "1"); // 1.414... rounds down
+  assert.equal(solve("Square Root", 3n), "2"); // 1.732... rounds up
+  // Straddle the k+0.5 midpoint at contract scale: k²+k is below it (rounds down
+  // to k), k²+k+1 is above it (rounds up to k+1). Ties are impossible since
+  // (k+0.5)² is never an integer.
+  const k = 10n ** 100n;
+  assert.equal(solve("Square Root", k * k + k), k.toString());
+  assert.equal(solve("Square Root", k * k + k + 1n), (k + 1n).toString());
+  // A real 201-digit contract input; expected value computed independently
+  // with Python's math.isqrt plus nearest-integer rounding.
+  assert.equal(
+    solve(
+      "Square Root",
+      118847015994321514905746087878996244591102145499959407693682076430852315765037840129132788771100287168964537481927379018105191681404591681302016130506656469595762942422025536561612851797949778638464519n
+    ),
+    "10901697849157328158981951240161710083844436327427228157030717228421332334757527960415837777955862845"
+  );
+});

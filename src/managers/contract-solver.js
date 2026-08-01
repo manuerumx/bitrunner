@@ -509,6 +509,24 @@ export const SOLVERS = {
     }
     return "";
   },
+
+  "Square Root": (data) => {
+    // Input is a ~200-digit BigInt (may arrive as a string); Math.sqrt has nowhere near
+    // enough precision, so use Newton's method on BigInts to get floor(sqrt(n)).
+    const n = BigInt(data);
+    if (n < 2n) return n.toString();
+    let x = n;
+    let y = (x + 1n) / 2n;
+    while (y < x) {
+      x = y;
+      y = (x + n / x) / 2n;
+    }
+    // x = floor(sqrt(n)). The contract wants the NEAREST integer; a tie is impossible
+    // because (x+0.5)² is never an integer.
+    const root = n - x * x > (x + 1n) * (x + 1n) - n ? x + 1n : x;
+    // Answer must be the decimal string of the BigInt, without the trailing "n".
+    return root.toString();
+  },
 };
 
 function solveStockTrader(k, prices) {
@@ -566,10 +584,10 @@ export async function main(ns) {
           continue;
         }
 
-        // Never gamble the LAST try on an auto-solver — if it's wrong the contract is gone.
-        // Leave low-try contracts for manual solving instead.
-        if (ns.codingcontract.getNumTriesRemaining(contract, hostname) <= 1) {
-          log(ns, `SKIP (1 try left): "${type}" on ${hostname}`);
+        // Attempt as long as at least one try remains — the failedContracts blacklist
+        // above already stops a bad solver from draining tries across cycles.
+        if (ns.codingcontract.getNumTriesRemaining(contract, hostname) <= 0) {
+          log(ns, `SKIP (no tries left): "${type}" on ${hostname}`);
           skipped++;
           continue;
         }
