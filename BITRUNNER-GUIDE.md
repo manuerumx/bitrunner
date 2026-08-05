@@ -98,6 +98,7 @@ src/
     ├── backdoor.js, backdoor-next.js, reset-prep.js
     ├── list-augs.js                             ← augmentation catalog (SF-4)
     ├── hwgw-tune.js, xp-farm.js, share-idle.js  ← runtime config toggles
+    ├── manager-toggle.js                        ← enable/disable daemon managers
     ├── stasis.js, stasis-worker.js             ← darknet stasis links
     └── darknet-scan.js, darknet-probe-worker.js ← darknet mapping & cracking intel
 ```
@@ -314,6 +315,17 @@ run src/tools/share-idle.js on / off
 ```
 Flips the `shareIdleRAM` override — forces `share()` to soak surplus RAM even when the faction-manager isn't reporting an active grind. Has no effect while the EXP farm is on (the EXP farm wins).
 
+#### `tools/manager-toggle.js` — Enable/Disable Daemon Managers
+```
+run src/tools/manager-toggle.js                   # list every manager + its current status
+run src/tools/manager-toggle.js off faction        # disable one (id or "Faction Manager" both work)
+run src/tools/manager-toggle.js off faction gang   # disable several in one call
+run src/tools/manager-toggle.js off all            # disable every manager
+run src/tools/manager-toggle.js on faction         # re-enable one
+run src/tools/manager-toggle.js on all             # re-enable every manager
+```
+Flips the `disabledManagers` override — the daemon kills a disabled-but-running manager and won't relaunch it until re-enabled, while `daemon.js` and every other manager keep running. Use this when a manager is doing something you don't want right now — e.g. the faction manager cancelling whatever work you started in favor of its own grind — without shutting down the whole daemon. Manager ids: `hack`, `rooter`, `server-buyer`, `hacknet`, `contracts`, `stock`, `faction`, `gang`, `sleeve`, `bladeburner`, `corp`.
+
 #### `tools/hwgw-tune.js` — Tune HWGW Pipeline Depth
 ```
 run src/tools/hwgw-tune.js                 # print current vs default
@@ -528,6 +540,7 @@ ns.writePort(5, JSON.stringify({
 | `hwgwMaxBatches` | 500 | Hard cap on HWGW batches per target per cycle |
 | `xpFarmRAM` | false | Soak surplus RAM with the EXP farm instead of `share()` (toggle with `xp-farm.js`) |
 | `shareIdleRAM` | false | Force `share()` on surplus RAM even without an active faction grind (toggle with `share-idle.js`) |
+| `disabledManagers` | `[]` | Manager ids the daemon won't launch (and will kill if running) — toggle with `manager-toggle.js` |
 
 ### Tuning Tips
 

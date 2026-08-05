@@ -1,20 +1,7 @@
 import { log, tlog, formatMoney, formatRAM } from "/src/lib/utils.js";
 import { scanNetwork } from "/src/lib/scanner.js";
 import { getConfig } from "/src/lib/config.js";
-
-const MANAGERS = [
-  { script: "/src/managers/hack-coordinator.js", name: "Hack Coordinator", priority: 1, phase: 1 },
-  { script: "/src/managers/rooter.js", name: "Rooter", priority: 2, phase: 1 },
-  { script: "/src/managers/server-buyer.js", name: "Server Buyer", priority: 3, phase: 2 },
-  { script: "/src/managers/hacknet-manager.js", name: "Hacknet Manager", priority: 4, phase: 2 },
-  { script: "/src/managers/contract-solver.js", name: "Contract Solver", priority: 5, phase: 3 },
-  { script: "/src/advanced/stock-trader.js", name: "Stock Trader", priority: 6, phase: 4 },
-  { script: "/src/advanced/faction-manager.js", name: "Faction Manager", priority: 7, phase: 5 },
-  { script: "/src/advanced/gang-manager.js", name: "Gang Manager", priority: 8, phase: 6 },
-  { script: "/src/advanced/sleeve-manager.js", name: "Sleeve Manager", priority: 9, phase: 6 },
-  { script: "/src/advanced/bladeburner-manager.js", name: "Bladeburner", priority: 10, phase: 6 },
-  { script: "/src/advanced/corp-manager.js", name: "Corporation", priority: 11, phase: 6 },
-];
+import { MANAGERS } from "/src/lib/constants.js";
 
 function getScriptRAM(ns, script) {
   const ram = ns.getScriptRam(script);
@@ -96,8 +83,23 @@ export async function main(ns) {
     // managers log "API required" to their own tail, not the terminal.
     if (++cycle % RELOCK_RETRY_CYCLES === 0) locked.clear();
 
+    const cfg = getConfig(ns); // surplus-RAM toggles + disabledManagers live on the config-overrides port (0 GB peek)
+
     for (const manager of sortedManagers) {
       if (!ns.fileExists(manager.script)) continue;
+
+      // Manually disabled via tools/manager-toggle.js: kill it if it's running (so it stops
+      // overriding whatever the player is doing) and don't relaunch it until re-enabled.
+      if (cfg.disabledManagers.includes(manager.id)) {
+        if (isRunning(ns, manager.script)) {
+          ns.kill(manager.script, "home");
+          log(ns, `Stopped ${manager.name} (disabled)`);
+        }
+        launchedLastCycle.delete(manager.script);
+        locked.delete(manager.script);
+        failures.delete(manager.script);
+        continue;
+      }
 
       // Already up (including started manually): keep managing it, and clear any stale state.
       if (isRunning(ns, manager.script)) {
@@ -136,7 +138,6 @@ export async function main(ns) {
     const hackLevel = ns.getHackingLevel();
     const freeRAM = ns.getServerMaxRam("home") - ns.getServerUsedRam("home");
     const net = getNetworkStats(ns);
-    const cfg = getConfig(ns); // surplus-RAM toggles live on the config-overrides port (0 GB peek)
 
     ns.clearLog();
     ns.print("╔══════════════════════════════════╗");
@@ -158,11 +159,13 @@ export async function main(ns) {
     for (const manager of sortedManagers) {
       const status = !ns.fileExists(manager.script)
         ? "·"
-        : isRunning(ns, manager.script)
-          ? "▶ RUNNING"
-          : locked.has(manager.script)
-            ? "🔒 LOCKED"
-            : `■ STOPPED (${getScriptRAM(ns, manager.script).toFixed(1)} GB)`;
+        : cfg.disabledManagers.includes(manager.id)
+          ? "⏸ DISABLED"
+          : isRunning(ns, manager.script)
+            ? "▶ RUNNING"
+            : locked.has(manager.script)
+              ? "🔒 LOCKED"
+              : `■ STOPPED (${getScriptRAM(ns, manager.script).toFixed(1)} GB)`;
       ns.print(`  ${manager.name}: ${status}`);
     }
 

@@ -13,6 +13,23 @@ export const PORTS = {
   DNET_PROBE: 12,
 };
 
+// Single source of truth for the daemon's manager roster, shared with tools/manager-toggle.js so
+// the toggle tool's valid ids always match what the daemon actually launches. `id` is the short
+// name used on the command line and in DEFAULTS.disabledManagers.
+export const MANAGERS = [
+  { id: "hack", script: "/src/managers/hack-coordinator.js", name: "Hack Coordinator", priority: 1, phase: 1 },
+  { id: "rooter", script: "/src/managers/rooter.js", name: "Rooter", priority: 2, phase: 1 },
+  { id: "server-buyer", script: "/src/managers/server-buyer.js", name: "Server Buyer", priority: 3, phase: 2 },
+  { id: "hacknet", script: "/src/managers/hacknet-manager.js", name: "Hacknet Manager", priority: 4, phase: 2 },
+  { id: "contracts", script: "/src/managers/contract-solver.js", name: "Contract Solver", priority: 5, phase: 3 },
+  { id: "stock", script: "/src/advanced/stock-trader.js", name: "Stock Trader", priority: 6, phase: 4 },
+  { id: "faction", script: "/src/advanced/faction-manager.js", name: "Faction Manager", priority: 7, phase: 5 },
+  { id: "gang", script: "/src/advanced/gang-manager.js", name: "Gang Manager", priority: 8, phase: 6 },
+  { id: "sleeve", script: "/src/advanced/sleeve-manager.js", name: "Sleeve Manager", priority: 9, phase: 6 },
+  { id: "bladeburner", script: "/src/advanced/bladeburner-manager.js", name: "Bladeburner", priority: 10, phase: 6 },
+  { id: "corp", script: "/src/advanced/corp-manager.js", name: "Corporation", priority: 11, phase: 6 },
+];
+
 export const WORKER_SCRIPTS = ["/src/hack.js", "/src/grow.js", "/src/weaken.js", "/src/share.js", "/src/xp.js"];
 
 export const WORKER_RAM = {
@@ -67,4 +84,9 @@ export const DEFAULTS = {
   // with tools/xp-farm.js. xpFarmRAM and share() compete for the same surplus, so xpFarmRAM WINS when
   // on — share() earns zero hacking EXP, so leaving it on is what stalls levelling on a big botnet.
   xpFarmRAM: false,
+  // Manager ids (see MANAGERS above) the daemon should not launch — and should kill if it finds
+  // one already running. Toggle at runtime with tools/manager-toggle.js. Use this to stop a
+  // manager from acting (e.g. faction-manager overriding your current work with its own grind)
+  // without shutting down the whole daemon.
+  disabledManagers: [],
 };
