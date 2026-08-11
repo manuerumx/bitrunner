@@ -37,14 +37,15 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 | Command | What it does |
 |---------|--------------|
 | `run src/advanced/augmentation-buyer.js` | **Dry run.** Lists every aug you can afford (respects faction rep + the 1.9× price stacking). Buys nothing. |
-| `run src/advanced/augmentation-buyer.js install` | Buys all affordable augs (most-expensive-first) + NeuroFlux levels. Does **not** reset. |
-| `run src/advanced/augmentation-buyer.js install reset` | Buys, then installs augmentations and reboots into `daemon.js` (**soft reset**). |
+| `run src/advanced/augmentation-buyer.js install` | Buys all affordable augs (most-expensive-first). Keeps leftover cash — **no** NeuroFlux, no reset. Safe to run repeatedly as money grows. |
+| `run src/advanced/augmentation-buyer.js install nfg` | Same, then dumps all leftover money into NeuroFlux Governor levels. Only do this right before installing — each NFG level makes every other aug 1.9× pricier. |
+| `run src/advanced/augmentation-buyer.js install reset` | Buys augs, dumps leftovers into NeuroFlux, then installs augmentations and reboots into `daemon.js` (**soft reset**). |
 | `run src/tools/sell-stocks.js` | **Liquidator (run instead of the daemon).** Stops the daemon + stock-trader so nothing keeps buying, then sells each position the moment it's green. Loops until you're flat, then reports realized P/L. |
 | `run src/tools/sell-stocks.js now` | Same, but **dumps every position immediately** — profit or loss. Use when you're resetting right now. |
 | `run src/tools/reset-prep.js` | Pre-reset checklist: reports open stock positions (and points you to `sell-stocks.js`), installed/pending augs, faction rep & favor, money. Sells nothing. |
 | `run src/tools/reset-prep.js go` | Force-sells any remaining stocks (safety net), installs augmentations, and resets. |
 
-**Typical end-of-run flow:** kill the daemon → `sell-stocks.js` (cash out at a profit) → `augmentation-buyer.js install` (buy) → `reset-prep.js go` (install + reset). `sell-stocks.js` stops the daemon for you, and the daemon restarts automatically after the reset.
+**Typical end-of-run flow:** kill the daemon → `sell-stocks.js` (cash out at a profit) → `augmentation-buyer.js install nfg` (buy + NFG money dump) → `reset-prep.js go` (install + reset). `sell-stocks.js` stops the daemon for you, and the daemon restarts automatically after the reset.
 
 > Note: "I have the money" isn't enough to buy an aug — you also need the **faction reputation** for it. The daemon's faction-manager farms rep automatically; the buyer is left manual.
 

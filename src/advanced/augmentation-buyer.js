@@ -76,6 +76,12 @@ export async function main(ns) {
   }
 
   const installNow = ns.args[0] === "install";
+  const resetNow = ns.args[1] === "reset";
+  // NFG levels are a money dump: each level bought multiplies every OTHER aug's
+  // price by 1.9x too, so buying them early makes the rest of the catalog
+  // unreachable. Only dump into NFG when the leftover cash is about to be wiped
+  // by a reset, or when explicitly asked to via 'nfg' (manual-install workflow).
+  const dumpIntoNfg = resetNow || ns.args[1] === "nfg";
 
   const augs = getAllAvailableAugs(ns);
   let totalCost = 0;
@@ -110,33 +116,42 @@ export async function main(ns) {
   tlog(ns, `Can afford: ${affordable.length} / ${augs.length}`);
   tlog(ns, `Total cost: ${formatMoney(totalCost)}`);
 
-  if (installNow && affordable.length > 0) {
-    tlog(ns, "\nPurchasing augmentations...");
-
+  if (installNow) {
     let purchased = 0;
-    for (const aug of affordable) {
-      if (ns.singularity.purchaseAugmentation(aug.faction, aug.name)) {
-        tlog(ns, `  BOUGHT: ${aug.name} from ${aug.faction}`);
-        purchased++;
-      } else {
-        tlog(ns, `  FAILED: ${aug.name}`);
+    if (affordable.length > 0) {
+      tlog(ns, "\nPurchasing augmentations...");
+      for (const aug of affordable) {
+        if (ns.singularity.purchaseAugmentation(aug.faction, aug.name)) {
+          tlog(ns, `  BOUGHT: ${aug.name} from ${aug.faction}`);
+          purchased++;
+        } else {
+          tlog(ns, `  FAILED: ${aug.name}`);
+        }
       }
     }
 
-    const nfg = buyNeuroFlux(ns);
-    if (nfg > 0) {
-      tlog(ns, `  BOUGHT: ${nfg}x NeuroFlux Governor`);
+    let nfg = 0;
+    if (dumpIntoNfg) {
+      nfg = buyNeuroFlux(ns);
+      if (nfg > 0) {
+        tlog(ns, `  BOUGHT: ${nfg}x NeuroFlux Governor`);
+      }
+      tlog(ns, `\nPurchased ${purchased} augmentations + ${nfg} NeuroFlux Governor`);
+    } else {
+      tlog(ns, `\nPurchased ${purchased} augmentations. NeuroFlux Governor skipped:`);
+      tlog(ns, "leftover money is kept for future augs (each NFG level makes every other aug 1.9x pricier).");
+      tlog(ns, "Add 'nfg' to dump leftovers into NFG, or 'reset' to dump and install.");
     }
 
-    tlog(ns, `\nPurchased ${purchased} augmentations + ${nfg} NeuroFlux Governor`);
-    tlog(ns, "Run with 'install' arg again or use ns.singularity.installAugmentations() to install.");
-
-    if (ns.args[1] === "reset") {
+    if (resetNow) {
       tlog(ns, "Installing augmentations and resetting...");
       ns.singularity.installAugmentations("src/daemon.js");
+    } else {
+      tlog(ns, "Run with 'install reset' to install, or use ns.singularity.installAugmentations().");
     }
-  } else if (!installNow) {
-    tlog(ns, "\nDry run. Use 'run src/advanced/augmentation-buyer.js install' to purchase.");
-    tlog(ns, "Use 'run src/advanced/augmentation-buyer.js install reset' to purchase and reset.");
+  } else {
+    tlog(ns, "\nDry run. Use 'run src/advanced/augmentation-buyer.js install' to purchase (keeps leftover money).");
+    tlog(ns, "Use 'run src/advanced/augmentation-buyer.js install nfg' to also dump leftovers into NeuroFlux Governor.");
+    tlog(ns, "Use 'run src/advanced/augmentation-buyer.js install reset' to purchase, dump into NFG, and reset.");
   }
 }

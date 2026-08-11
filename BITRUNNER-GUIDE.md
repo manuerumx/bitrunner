@@ -202,9 +202,10 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 - **Requires**: Source-File 4
 - **Usage**:
   - `run src/advanced/augmentation-buyer.js` — Dry run, shows what you can afford
-  - `run src/advanced/augmentation-buyer.js install` — Purchases augmentations
-  - `run src/advanced/augmentation-buyer.js install reset` — Purchases and installs (triggers soft reset)
-- **Strategy**: Buys most expensive augmentations first (price multiplier stacking), then fills remaining money with NeuroFlux Governor levels.
+  - `run src/advanced/augmentation-buyer.js install` — Purchases augmentations, keeps leftover money (no NeuroFlux)
+  - `run src/advanced/augmentation-buyer.js install nfg` — Purchases augmentations, then dumps leftover money into NeuroFlux Governor levels (for manual installs)
+  - `run src/advanced/augmentation-buyer.js install reset` — Purchases (including the NeuroFlux dump) and installs (triggers soft reset)
+- **Strategy**: Buys most expensive augmentations first (price multiplier stacking). NeuroFlux Governor is only bought with `nfg` or `reset`, as a final money dump: each NFG level multiplies every *other* aug's price by 1.9× as well, so dumping early would price the rest of the catalog out of reach.
 
 #### `advanced/gang-manager.js` — Gang Operations
 - **Requires**: Source-File 2 (or BitNode 2), gang must be created first
