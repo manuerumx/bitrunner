@@ -1,19 +1,24 @@
 import { DEFAULTS } from "/src/lib/constants.js";
+import { momentumSignal, pushSample, shouldRealize } from "/src/lib/market.js";
 import { log, formatMoney } from "/src/lib/utils.js";
 
-const COMMISSION = 100000;
-const MIN_PROFIT = COMMISSION * 2;
+// ns.stock.getConstants() is 0 GB and reports the real commission, so it no longer has to
+// be hardcoded. Read once at startup — it is a game constant, not a live figure.
+let COMMISSION = 100000;
+let MIN_PROFIT = COMMISSION * 2;
 const FORECAST_BUY_THRESHOLD = 0.55;
 const FORECAST_SELL_THRESHOLD = 0.5;
 
-function has4SData(ns) {
-  try {
-    ns.stock.getForecast("ECP");
-    return true;
-  } catch {
-    return false;
-  }
-}
+// Fallback trading, used only when 4S market data isn't owned. Without a forecast the
+// only signal is observed price history, so the bar is deliberately higher: a position
+// pays commission twice, and there is no forecast to say when to get out.
+const MOMENTUM_WINDOW = 20; // samples kept per symbol (~2 min at the 6 s cycle)
+const MOMENTUM_MIN_SAMPLES = 12;
+const MOMENTUM_BUY_THRESHOLD = 0.04;
+const MOMENTUM_SELL_THRESHOLD = 0.02;
+// Cap on how much of the per-cycle budget one non-4S position may take. Blind trading
+// should be spread thin.
+const MOMENTUM_POSITION_FRACTION = 0.2;
 
 function hasTIX(ns) {
   try {
@@ -73,14 +78,26 @@ export async function main(ns) {
     return;
   }
 
-  const use4S = has4SData(ns);
+  // has4SData() is definitive and costs 0.05 GB; the old probe inferred it from whether
+  // getForecast("ECP") threw. tools/market-access.js buys this when the budget allows.
+  const use4S = ns.stock.has4SData();
   let useShorts = hasShortAccess(ns);
 
+  const constants = ns.stock.getConstants();
+  COMMISSION = constants.StockMarketCommission;
+  MIN_PROFIT = COMMISSION * 2;
+
   if (!use4S) {
-    ns.tprint("WARN: No 4S Market Data. Trading will be limited.");
+    ns.tprint("WARN: No 4S Market Data — trading on price momentum only. Buy 4S with:");
+    ns.tprint("      run /src/tools/market-access.js");
   }
 
-  log(ns, `Stock Trader started (4S: ${use4S}, Shorts: ${useShorts})`);
+  // Per-symbol price history for the non-4S path. Bounded by pushSample so it can't grow
+  // for the whole run.
+  /** @type {Record<string, number[]>} */
+  const history = {};
+
+  log(ns, `Stock Trader started (4S: ${use4S}, Shorts: ${useShorts}, commission ${formatMoney(COMMISSION)})`);
 
   while (true) {
     const symbols = ns.stock.getSymbols();
@@ -101,7 +118,7 @@ export async function main(ns) {
         if (longShares > 0 && forecast < FORECAST_SELL_THRESHOLD) {
           const gain = ns.stock.getSaleGain(sym, longShares, "L");
           const profit = gain - longShares * longAvg;
-          if (profit > -MIN_PROFIT) {
+          if (shouldRealize(profit, MIN_PROFIT)) {
             const salePrice = ns.stock.sellStock(sym, longShares);
             if (salePrice > 0) {
               log(ns, `SELL LONG ${sym}: ${longShares} shares, profit ${formatMoney(profit)}`);
@@ -112,7 +129,7 @@ export async function main(ns) {
         if (useShorts && shortShares > 0 && forecast > FORECAST_SELL_THRESHOLD) {
           const gain = ns.stock.getSaleGain(sym, shortShares, "S");
           const profit = gain - shortShares * shortAvg;
-          if (profit > -MIN_PROFIT) {
+          if (shouldRealize(profit, MIN_PROFIT)) {
             const salePrice = ns.stock.sellShort(sym, shortShares);
             if (salePrice > 0) {
               log(ns, `SELL SHORT ${sym}: ${shortShares} shares, profit ${formatMoney(profit)}`);
@@ -153,6 +170,40 @@ export async function main(ns) {
                 useShorts = false;
                 log(ns, "Short selling unavailable (needs BitNode-8 / SF-8.2) — disabling shorts");
               }
+            }
+          }
+        }
+      } else {
+        // No 4S data: trade observed momentum instead. Every buy/sell in this manager used
+        // to sit inside the `if (use4S)` above, so without 4S the loop ran forever and
+        // never traded — it read prices, decided nothing, and slept.
+        const price = ns.stock.getPrice(sym);
+        history[sym] = pushSample(history[sym], price, MOMENTUM_WINDOW);
+        const signal = momentumSignal(history[sym], {
+          minSamples: MOMENTUM_MIN_SAMPLES,
+          buyThreshold: MOMENTUM_BUY_THRESHOLD,
+          sellThreshold: MOMENTUM_SELL_THRESHOLD,
+        });
+
+        if (signal === "sell" && longShares > 0) {
+          const gain = ns.stock.getSaleGain(sym, longShares, "L");
+          const profit = gain - longShares * longAvg;
+          // Same loss tolerance the 4S path uses. Without it the fallback trader would
+          // dump on a 2% dip and pay commission twice to realise the loss.
+          if (shouldRealize(profit, MIN_PROFIT) && ns.stock.sellStock(sym, longShares) > 0) {
+            log(ns, `SELL LONG ${sym}: ${longShares} shares, profit ${formatMoney(profit)} (momentum)`);
+          }
+        }
+
+        if (signal === "buy" && longShares === 0) {
+          const slice = Math.min(remaining, money * DEFAULTS.stockBudgetPercent * MOMENTUM_POSITION_FRACTION);
+          const affordable = Math.floor((slice - COMMISSION) / ns.stock.getAskPrice(sym));
+          const shares = Math.min(affordable, maxShares);
+          if (shares > 0) {
+            const cost = ns.stock.getPurchaseCost(sym, shares, "L");
+            if (cost > 0 && cost <= remaining && ns.stock.buyStock(sym, shares) > 0) {
+              remaining -= cost;
+              log(ns, `BUY LONG ${sym}: ${shares} shares (momentum)`);
             }
           }
         }

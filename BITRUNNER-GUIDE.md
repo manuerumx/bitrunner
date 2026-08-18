@@ -83,6 +83,9 @@ src/
 │   ├── constants.js, utils.js, config.js
 │   ├── scanner.js, target-selector.js
 │   ├── port-registry.js, batch-calculator.js
+│   ├── manager-health.js                        ← daemon status vocabulary + RAM verdicts
+│   ├── purchasing.js                            ← shared budget/shopping-list planner
+│   ├── programs.js, market.js, sleeves.js, corp.js  ← per-subsystem decision logic
 ├── managers/                                  ← Core subsystem managers
 │   ├── rooter.js, hack-coordinator.js
 │   ├── server-buyer.js, hacknet-manager.js
@@ -99,8 +102,12 @@ src/
     ├── list-augs.js                             ← augmentation catalog (SF-4)
     ├── hwgw-tune.js, xp-farm.js, share-idle.js  ← runtime config toggles
     ├── manager-toggle.js                        ← enable/disable daemon managers
+    ├── ram-report.js                             ← per-manager / per-function RAM audit
+    ├── program-buyer.js, home-upgrader.js        ← one-shot buyers (SF-4)
+    ├── market-access.js, corp-boost.js           ← one-shot buyers (WSE ladder, corp boosters)
     ├── stasis.js, stasis-worker.js             ← darknet stasis links
     ├── darknet-scan.js, darknet-probe-worker.js ← darknet mapping & cracking intel
+    ├── darknet-crack-worker.js                   ← heartbleed log capture (peek-only)
     └── ipvgo.js                                 ← IPvGO subnet auto-player
 ```
 
@@ -190,8 +197,10 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 #### `advanced/stock-trader.js` — Stock Market Bot
 - **Requires**: WSE Account + TIX API Access (~$30B total investment)
 - **Cycle**: Every 6 seconds (matches stock price update frequency)
-- **Strategy with 4S data**: Buys stocks with forecast >55%, sells when forecast drops below 50%. Commission-aware — only trades when expected profit exceeds $200K.
-- **Strategy without 4S**: Limited functionality (4S data strongly recommended).
+- **Strategy with 4S data**: Buys stocks with forecast >55%, sells when forecast drops below 50%. Commission-aware — the commission now comes from `ns.stock.getConstants()` (0 GB) instead of a hardcoded $100K.
+- **Strategy without 4S**: Momentum. It keeps a bounded 20-sample price history per symbol and trades only on a ≥4% rise or ≥2% fall, and only once it has 12 samples — so the first ~72 s after a restart it deliberately does nothing rather than trade blind. Positions are capped at 20% of the cycle budget.
+  > Before this, the trader's entire buy/sell body sat inside `if (use4S)`. Without 4S data it looped forever at 6 s, read prices, and never placed a single trade.
+- **Access**: `tools/market-access.js` buys the WSE → TIX → 4S → 4S TIX ladder for it. The `hasTixApiAccess()` / `has4SData()` probes (0.05 GB each) replaced try/catch guesswork.
 - **Supports**: Long positions always. Short positions if SF-8 is unlocked.
 
 #### `advanced/faction-manager.js` — Faction Work Automation
@@ -217,11 +226,17 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 - **Requires**: Source-File 10
 - **Cycle**: Every 30 seconds
 - **What it does**: Assigns sleeves to optimal activities — shock recovery first, then synchronization, then faction work / gym training / crime based on sleeve index. Purchases sleeve augmentations when affordable (<1% of money).
+- **Buys capacity**: a new sleeve when `getSleeveCost()` fits `DEFAULTS.sleeveBudgetPercent`, then memory upgrades cheapest-first. A new sleeve outranks memory because it compounds; memory outranks everything else because it *survives an augmentation install*, unlike shock and sync.
+- **Idempotent assignment**: it now reads `getTask()` and skips a sleeve that's already doing what was chosen. Re-issuing a `setTo*` call restarts the task, and crimes and faction work accumulate cycles toward a payout — so the old unconditional re-assignment every 30 s could hold a sleeve permanently at zero progress.
+- **Sleeve count is re-read every cycle.** It used to be read once before the loop, so a sleeve bought mid-run was never assigned work until the daemon restarted the manager.
 
 #### `advanced/corp-manager.js` — Corporation Management
 - **Requires**: Source-File 3 (or BitNode 3)
 - **Cycle**: Every 10 seconds
-- **What it does**: Manages divisions (starts with Agriculture), hires and assigns employees evenly across roles, upgrades warehouses, develops and sells products, buys corporate upgrades. The most RAM-heavy script (~30 GB).
+- **What it does**: Manages divisions (starts with Agriculture), hires and assigns employees evenly across roles, upgrades warehouses, develops and sells products, buys corporate upgrades.
+- **Fixed: it was selling its own production multipliers.** The material loop sold `Hardware`, `Robots`, `AI Cores` and `Real Estate` on the same "stored and producing" rule it used for Food and Plants. Those four are **boost materials** — they multiply a division's production *while held*, and are never output. Selling them liquidated the multiplier. The sell list now comes from `selectMaterialsToSell()` in `lib/corp.js`, which excludes them by construction.
+- **Companion**: `tools/corp-boost.js` (one-shot) stocks those boosters and enables MarketTA2 pricing — kept out of this manager because corp API calls are expensive (see below).
+- **RAM, unresolved**: every `ns.corporation.*` function is documented at **20 GB**, and this manager references 20 of them — nominally ~400 GB, which would mean it has never launched on a normal home. Run `run src/tools/ram-report.js api` to see what the game actually charges before trusting either figure.
 
 #### `advanced/bladeburner-manager.js` — Bladeburner Operations
 - **Requires**: Source-File 6 or 7
@@ -361,6 +376,36 @@ run src/tools/darknet-scan.js intel        # cracking intel for every uncracked 
 
 Mapped servers flow into `stasis.js` automatically (they show up as `no-password` candidates until cracked). The passwords themselves stay a human job — hints are puzzles by design. The loop is: **scan → read intel → crack → `stasis.js link` → `stasis.js auto` → scan deeper from the newly linked server.**
 
+##### `crack` mode — heartbleed log capture (Stage A)
+```
+run src/tools/darknet-scan.js crack        # scrape logs from every reachable uncracked server
+```
+`heartbleed()` extracts a server's recent log lines, and — unlike `authenticate()` — it works on servers you have *no* password for. It reaches only servers directly connected to the server the script runs on, so `crack` ships a **2.2 GB** worker (1.6 base + 0.6 for the call) to each already-cracked host and points it at that host's uncracked neighbours. `planCrackTargets()` picks the pairs: skip solved, skip offline, skip anything above your charisma (the API refuses those outright), easiest first. Captures merge into `/data/darknet-logs.txt` without duplicating lines, since servers keep adding their own messages on a timer.
+
+**It captures; it does not crack.** Calls use `peek: true`, so nothing is consumed and a repeat run can't destroy intel that wasn't stored yet, and `authenticate()` is never called. That restraint is deliberate: the game documents its server model list as *"intentionally undocumented — you are supposed to experiment and discover the models"*, so there is no evidence that a password is derivable from hint + format + length. Building the corpus is how that question gets answered. If a pattern emerges from the logs, a generator becomes worth writing; guessing before then just burns time against servers that mutate away.
+
+#### `tools/ram-report.js` — RAM Audit
+```
+run src/tools/ram-report.js                # per-manager RAM vs. home, with a verdict
+run src/tools/ram-report.js api            # per-function RAM as the game charges it
+```
+The daemon refuses to launch a script that doesn't fit in free home RAM. If a script is bigger than home *itself* it can never launch, and the dashboard shows the same `🔒 LOCKED` used for a missing Source File — so "outgrew home" and "subsystem unavailable" look identical. This names the case: `ok` / `blocked` (fits home, botnet busy — the daemon will retry) / `impossible` (never) / `unknown` (`getScriptRam` returned 0, meaning the file failed to parse).
+
+`api` mode calls `ns.getFunctionRamCost()` (0 GB) for the expensive namespaces. It exists to settle one open question: the definitions file prices every `ns.corporation.*` call at 20 GB, which would put `corp-manager.js` near 400 GB.
+
+#### One-shot buyers — `program-buyer.js`, `home-upgrader.js`, `market-access.js`, `corp-boost.js`
+```
+run src/tools/program-buyer.js dry         # what it would buy from the darkweb
+run src/tools/market-access.js dry         # next WSE ladder rung
+run src/tools/corp-boost.js dry            # boost materials per division/city
+```
+All four are launched by the daemon and all four **exit instead of looping** — see [One-Shot Managers](#one-shot-managers) below for the cadence and why. Each has a `dry` mode that reports the plan and buys nothing.
+
+- **`program-buyer.js`** (SF-4) — buys the TOR router, then the port openers cheapest-first, then `Formulas.exe` and `DarkscapeNavigator.exe`. This is what unblocks `rooter.js`: it can only open as many ports as it has programs, and those were previously bought by hand. Gates on `ns.hasTorRouter()` (0.05 GB, *not* SF-multiplied) rather than `getDarkwebPrograms()` (16 GB at SF-4.1) for the same answer. A program this BitNode's darkweb doesn't stock is skipped, not fatal.
+- **`home-upgrader.js`** (SF-4) — buys home RAM while `DEFAULTS.homeUpgradeBudgetPercent` lasts. Home RAM is the single gate on how many managers can run at all. It carries **no cost probe**: `getUpgradeHomeRamCost` would add 24 GB at SF-4.1 and tells us nothing `upgradeHomeRam()`'s return value doesn't, so spend is tracked by watching the wallet. Cores are deliberately not bought — Bitburner's static analyzer charges for every literal `ns.<fn>` *reference* whether or not it runs, so hiding `upgradeHomeCores` behind a config flag would cost the full 48 GB anyway.
+- **`market-access.js`** — climbs WSE → TIX API → 4S Data → 4S TIX. A ladder, not a shopping list: an unaffordable rung stops the climb, because buying the TIX API without the WSE account underneath it buys something unusable. Prices come from `getConstants()` (0 GB), so nothing is hardcoded. Total 12.3 GB, no Source-File multiplier.
+- **`corp-boost.js`** (SF-3) — stocks boost materials toward `DEFAULTS.corpBoostTargets` and turns on MarketTA2 pricing. Uses `bulkPurchase`, not `buyMaterial`: `buyMaterial` sets a per-second buy *rate* that would keep running after the script exits and overfill the warehouse, which stalls production outright. Purchases are capped by free warehouse space with `DEFAULTS.corpWarehouseHeadroom` left for output. Kept separate from `corp-manager.js` so its (documented) 20 GB-per-call cost is borrowed, not resident.
+
 #### `tools/ipvgo.js` — IPvGO Auto-Player
 ```
 run src/tools/ipvgo.js
@@ -385,12 +430,39 @@ The daemon (`src/daemon.js`) is the single entry point. When you run it:
 2. **Launches managers** in priority order, skipping any that won't fit in RAM:
    1. Hack Coordinator (income engine)
    2. Rooter (network expansion)
-   3. Server Buyer (RAM expansion)
-   4. Hacknet Manager (passive income)
-   5. Contract Solver (bonus rewards)
-   6. Stock Trader, Faction Manager, Gang, Sleeves, Bladeburner, Corporation
+   3. Program Buyer, Home Upgrader *(one-shot)*
+   4. Server Buyer (RAM expansion)
+   5. Hacknet Manager (passive income)
+   6. Contract Solver (bonus rewards)
+   7. Market Access *(one-shot)*, Stock Trader, Faction Manager, Gang, Sleeves, Bladeburner, Corporation, Corp Boost *(one-shot)*
 3. **Monitors** every 5 seconds: restarts crashed managers, displays status dashboard
 4. **Self-heals**: If a manager dies, daemon relaunches it on the next cycle
+
+<a id="one-shot-managers"></a>
+#### One-Shot Managers
+
+Some entries in `MANAGERS` are marked `oneShot: true`. They do a job and exit rather than
+looping — the buyers in `tools/`. The daemon has no scheduler, so they ride its relaunch
+machinery instead: the script exits, the daemon counts three immediate-exits, locks it, and
+`RELOCK_RETRY_CYCLES` clears the lock ~5 minutes later. Net effect is **a burst of ~3 runs
+every 5 minutes**, which is the right cadence for shopping and costs no new code.
+
+Two consequences, both deliberate:
+
+- **They run about three times per burst**, so every one-shot must be idempotent. The
+  `fileExists` filter does it for `program-buyer.js`; `upgradeHomeRam()` returning `false`
+  does it for `home-upgrader.js`; the `has*` probes do it for `market-access.js`.
+- **They rest in the daemon's `locked` state**, which for a normal manager means "missing
+  Source File / feature unavailable". That would make `🔒 LOCKED` mean two different things,
+  so one-shots render as **`⏱ IDLE`** instead (`lib/manager-health.js`, unit-tested). A
+  one-shot that is genuinely *too big for home* is still distinguishable: the daemon never
+  manages to launch it, so it never locks, and it shows as `■ STOPPED (74.2 GB)` with its
+  RAM bill. `tools/ram-report.js` names that case outright.
+
+Why one-shots at all: Singularity RAM is multiplied ×16 at SF-4.1, so `program-buyer.js`
+costs ~74 GB and `home-upgrader.js` ~50 GB. Holding either resident for a job that finishes
+after a handful of purchases would cost more than `DEFAULTS.reservedHomeRAM` protects for the
+whole botnet. As one-shots, the RAM is only borrowed.
 
 ### Proto-Batch Mode
 

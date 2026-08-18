@@ -64,8 +64,27 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 | `run src/tools/nuke-all.js` | none | — | One-shot: opens ports and nukes every server you can root right now. |
 | `run src/tools/rename-servers.js` | none | — | One-shot: renames old `bitrunner-#` purchased servers to scientist names (see below). Kills a busy server's scripts if needed; the coordinator redeploys them next cycle. |
 | `run src/managers/prep-server.js <target>` | hostname | — | Manually weaken/grow one target to min-security/max-money. Exits when prepped. |
+| `run src/tools/ram-report.js` | none | — | What every manager costs in RAM, and which ones are **too big to ever launch** on this home. See the note below. |
+| `run src/tools/ram-report.js api` | `api` | — | Per-function RAM as the game actually charges it (`getFunctionRamCost`, 0 GB). Settles whether corporation calls really cost 20 GB each. |
+| `run src/tools/program-buyer.js dry` | `dry` | SF-4 + TOR | Reports which darkweb programs it would buy and for how much. Buys nothing. |
+| `run src/tools/market-access.js dry` | `dry` | — | Reports the next World Stock Exchange unlock it would buy (WSE → TIX → 4S → 4S TIX). Buys nothing. |
+| `run src/tools/corp-boost.js dry` | `dry` | SF-3 | Reports the boost materials it would stock per division/city. Buys nothing. |
+| `run src/tools/darknet-scan.js crack` | `crack` | Darknet | Heartbleeds every reachable uncracked darknet server and stores the captured logs. **Read-only** — see below. |
 
 `analyze.js`, `connect.js`, and `prep-server.js` **require a hostname argument** — running them bare just prints usage.
+
+> 🧠 **`ram-report.js` is the one to run when a manager never starts.** The daemon refuses to
+> launch any script that doesn't fit in free home RAM. If a script is bigger than home
+> *itself*, it can never launch — and the dashboard shows the same `🔒 LOCKED` it uses for a
+> missing Source File, so the two are indistinguishable. `ram-report.js` calls that case
+> `impossible` and names the script.
+
+> 🔓 **`darknet-scan.js crack` does not guess passwords.** It captures server logs with
+> `heartbleed(peek: true)` — nothing is consumed, nothing is attempted, no `authenticate()`
+> call is made. Darknet server models are *intentionally undocumented* by the game, so there
+> is no evidence yet that a password can be derived from the hint, format and length. This
+> builds the corpus that would answer that; cracking stays yours. Captures land in
+> `/data/darknet-logs.txt`, and charisma gates which servers are reachable at all.
 
 > 🧑‍🔬 **Fun note:** purchased servers are named after famous computer scientists — `turing`, `lovelace`, `hopper`, `dijkstra`, `von-neumann`… The server-buyer picks a random unused name from the hall of fame in `src/lib/server-names.js`, so your botnet reads like a CS syllabus. If the list ever runs dry, the game appends a number (`knuth-0`) and life goes on.
 
@@ -83,8 +102,16 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 
 - **Workers** — `hack.js`, `grow.js`, `weaken.js` — dispatched by the hack-coordinator with precise timing/thread args. Running them manually does nothing useful.
 - **Managers** — `hack-coordinator.js`, `rooter.js`, `server-buyer.js`, `hacknet-manager.js`, `contract-solver.js`, and the advanced managers (`stock-trader.js`, `faction-manager.js`, `gang-manager.js`, `sleeve-manager.js`, `bladeburner-manager.js`, `corp-manager.js`) — all auto-launched by `daemon.js`.
+- **One-shot buyers** — `program-buyer.js`, `home-upgrader.js`, `market-access.js`, `corp-boost.js` — also auto-launched by `daemon.js`, but they *run, spend, and exit* instead of looping. The daemon re-runs each one roughly every 5 minutes. They show as `⏱ IDLE` on the dashboard between bursts; that's the normal resting state, not a fault. Each has a `dry` mode (above) if you want to see the plan first.
+- **Darknet workers** — `darknet-probe-worker.js`, `darknet-crack-worker.js`, `stasis-worker.js` — shipped to darknet servers by `darknet-scan.js` / `stasis.js` and exec'd there.
 
 You *can* launch a single manager by hand for testing (e.g. `run src/advanced/stock-trader.js`); the daemon detects it's already running and won't double-launch it. Advanced managers exit with an "API required" message if their Source File isn't unlocked.
+
+> ⏱ **Why the one-shots idle instead of looping.** Singularity RAM is multiplied ×16 at SF-4.1,
+> so `program-buyer.js` costs ~74 GB and `home-upgrader.js` ~50 GB. Holding that resident for a
+> job that finishes after a handful of purchases would cost more than the daemon reserves for
+> the entire botnet. Running them as one-shots means the RAM is only borrowed. The cost of that
+> choice: each one runs ~3 times per burst, so all of them are written to be idempotent.
 
 ---
 
@@ -93,7 +120,11 @@ You *can* launch a single manager by hand for testing (e.g. `run src/advanced/st
 | Script | Needs |
 |--------|-------|
 | `augmentation-buyer.js`, `reset-prep.js`, `backdoor.js` | **SF-4** (Singularity) |
-| `stock-trader.js` (auto) | WSE + TIX API (shorts need SF-8) |
+| `program-buyer.js` (auto), `home-upgrader.js` (auto) | **SF-4** — and note the ×16/×4/×1 RAM multiplier by SF-4 level |
+| `market-access.js` (auto) | No Source File — buys WSE/TIX/4S itself |
+| `corp-boost.js` (auto) | SF-3 / BitNode 3 |
+| `darknet-scan.js crack` | Darknet access (`DarkscapeNavigator.exe`) + charisma |
+| `stock-trader.js` (auto) | WSE + TIX API (shorts need SF-8); trades on momentum without 4S |
 | `faction-manager.js` (auto) | SF-4 |
 | `gang-manager.js` (auto) | SF-2 / BitNode 2 |
 | `corp-manager.js` (auto) | SF-3 / BitNode 3 |

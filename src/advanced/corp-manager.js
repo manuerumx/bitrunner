@@ -1,6 +1,7 @@
 import { log, formatMoney } from "/src/lib/utils.js";
 import { PORTS } from "/src/lib/constants.js";
 import { writePortData } from "/src/lib/port-registry.js";
+import { selectMaterialsToSell, TRACKED_MATERIALS } from "/src/lib/corp.js";
 
 const EMPLOYEE_ROLES = ["Operations", "Engineer", "Business", "Management", "Research & Development"];
 
@@ -83,12 +84,16 @@ function manageDivision(ns, divName) {
 
   for (const city of div.cities) {
     try {
-      const materials = ["Food", "Plants", "Hardware", "Robots", "AI Cores", "Real Estate"];
-      for (const mat of materials) {
-        const material = ns.corporation.getMaterial(divName, city, mat);
-        if (material.stored > 0 && material.productionAmount > 0) {
-          ns.corporation.sellMaterial(divName, city, mat, "MAX", "MP");
-        }
+      // Hardware / Robots / AI Cores / Real Estate multiply this division's production
+      // while they are HELD — they are not output. This loop used to sell all four on the
+      // same "stored and producing" rule it applied to Food and Plants, liquidating the
+      // multiplier that tools/corp-boost.js now spends money building up.
+      const materials = TRACKED_MATERIALS.map((name) => ({
+        name,
+        ...ns.corporation.getMaterial(divName, city, name),
+      }));
+      for (const name of selectMaterialsToSell(materials)) {
+        ns.corporation.sellMaterial(divName, city, name, "MAX", "MP");
       }
     } catch {}
   }

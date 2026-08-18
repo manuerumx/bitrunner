@@ -2,6 +2,7 @@ import { log, tlog, formatMoney, formatRAM } from "/src/lib/utils.js";
 import { scanNetwork } from "/src/lib/scanner.js";
 import { getConfig } from "/src/lib/config.js";
 import { MANAGERS } from "/src/lib/constants.js";
+import { managerStatus } from "/src/lib/manager-health.js";
 
 function getScriptRAM(ns, script) {
   const ram = ns.getScriptRam(script);
@@ -157,15 +158,15 @@ export async function main(ns) {
     ns.print("");
     ns.print(`── Managers ──`);
     for (const manager of sortedManagers) {
-      const status = !ns.fileExists(manager.script)
-        ? "·"
-        : cfg.disabledManagers.includes(manager.id)
-          ? "⏸ DISABLED"
-          : isRunning(ns, manager.script)
-            ? "▶ RUNNING"
-            : locked.has(manager.script)
-              ? "🔒 LOCKED"
-              : `■ STOPPED (${getScriptRAM(ns, manager.script).toFixed(1)} GB)`;
+      const exists = ns.fileExists(manager.script);
+      const status = managerStatus({
+        exists,
+        disabled: cfg.disabledManagers.includes(manager.id),
+        running: exists && isRunning(ns, manager.script),
+        locked: locked.has(manager.script),
+        oneShot: manager.oneShot,
+        ram: exists ? getScriptRAM(ns, manager.script) : 0,
+      });
       ns.print(`  ${manager.name}: ${status}`);
     }
 
