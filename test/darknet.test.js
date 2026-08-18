@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   buildCandidate,
   mergeDarknetMap,
+  mergeHeartbleedLogs,
+  planCrackTargets,
   parseDarknetMap,
   parsePasswordStore,
   pickCrawlHosts,
@@ -290,4 +292,110 @@ test("pickCrawlHosts takes only online, exec-able servers with a password and pr
 
 test("probe worker RAM is the 1.6 GB base plus probe (0.2) and getServerDetails (0.1)", () => {
   assert.equal(PROBE_WORKER_RAM, 1.9);
+});
+
+// ── planCrackTargets ────────────────────────────────────────────────────────
+//
+// Stage A of the cracking pipeline (docs/API-COVERAGE-AUDIT.md §5.2): decide which
+// uncracked servers are worth a heartbleed log capture, and which already-cracked
+// neighbour to run the worker from. heartbleed() and authenticate() only reach servers
+// directly connected to the server the script runs on, so every target needs a vantage
+// point — the host whose probe report saw it.
+
+// Map entry shape written by mergeDarknetMap() from a ProbeReport.
+function entry(over = {}) {
+  return { seenFrom: "dn-alpha", requiredCharisma: 10, isOnline: true, depth: 2, difficulty: 5, ...over };
+}
+
+test("planCrackTargets pairs an uncracked server with the host that saw it", () => {
+  const targets = planCrackTargets({
+    map: { "dn-beta": entry() },
+    solved: [],
+    charisma: 100,
+  });
+  assert.deepEqual(targets, [{ from: "dn-alpha", target: "dn-beta", requiredCharisma: 10 }]);
+});
+
+test("planCrackTargets skips servers whose password is already known", () => {
+  const targets = planCrackTargets({
+    map: { "dn-beta": entry() },
+    solved: ["dn-beta"],
+    charisma: 100,
+  });
+  assert.deepEqual(targets, []);
+});
+
+test("planCrackTargets skips offline servers", () => {
+  const targets = planCrackTargets({
+    map: { "dn-beta": entry({ isOnline: false }) },
+    solved: [],
+    charisma: 100,
+  });
+  assert.deepEqual(targets, []);
+});
+
+// "You cannot scrape logs from servers whose required charisma is higher than your
+// charisma level" — NetscriptDefinitions.d.ts, Darknet.heartbleed.
+test("planCrackTargets skips servers above the player's charisma", () => {
+  const targets = planCrackTargets({
+    map: { "dn-beta": entry({ requiredCharisma: 500 }) },
+    solved: [],
+    charisma: 100,
+  });
+  assert.deepEqual(targets, []);
+});
+
+// A host nobody has probed from has no vantage point, so no script can reach it.
+test("planCrackTargets skips servers with no known vantage point", () => {
+  const targets = planCrackTargets({
+    map: { "dn-beta": entry({ seenFrom: undefined }) },
+    solved: [],
+    charisma: 100,
+  });
+  assert.deepEqual(targets, []);
+});
+
+test("planCrackTargets orders the easiest targets first", () => {
+  const targets = planCrackTargets({
+    map: {
+      hard: entry({ requiredCharisma: 90 }),
+      easy: entry({ requiredCharisma: 10 }),
+      middling: entry({ requiredCharisma: 50 }),
+    },
+    solved: [],
+    charisma: 100,
+  });
+  assert.deepEqual(
+    targets.map((t) => t.target),
+    ["easy", "middling", "hard"]
+  );
+});
+
+// ── mergeHeartbleedLogs ─────────────────────────────────────────────────────
+//
+// Servers emit log lines on their own schedule (logTrafficInterval), so repeat captures
+// return overlapping content. The store accumulates without duplicating.
+
+test("mergeHeartbleedLogs records logs for a newly captured host", () => {
+  const merged = mergeHeartbleedLogs({}, [{ host: "dn-beta", logs: ["auth failed for root"] }]);
+  assert.deepEqual(merged, { "dn-beta": { logs: ["auth failed for root"] } });
+});
+
+test("mergeHeartbleedLogs appends only lines it has not already stored", () => {
+  const existing = { "dn-beta": { logs: ["line one"] } };
+  const merged = mergeHeartbleedLogs(existing, [
+    { host: "dn-beta", logs: ["line one", "line two"] },
+  ]);
+  assert.deepEqual(merged["dn-beta"].logs, ["line one", "line two"]);
+});
+
+test("mergeHeartbleedLogs leaves hosts absent from this round untouched", () => {
+  const existing = { "dn-alpha": { logs: ["kept"] } };
+  const merged = mergeHeartbleedLogs(existing, [{ host: "dn-beta", logs: ["new"] }]);
+  assert.deepEqual(merged["dn-alpha"].logs, ["kept"]);
+});
+
+test("mergeHeartbleedLogs ignores a capture that returned nothing", () => {
+  const merged = mergeHeartbleedLogs({}, [{ host: "dn-beta", logs: [] }]);
+  assert.deepEqual(merged, {});
 });

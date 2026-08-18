@@ -21,6 +21,17 @@ export const STASIS_WORKER_RAM = 13.6;
 // darknet-probe-worker.js: 1.6 GB base + probe (0.2) + getServerDetails (0.1).
 export const PROBE_WORKER_RAM = 1.9;
 
+// darknet-crack-worker.js: 1.6 GB base + heartbleed (0.6). The target hostname arrives as
+// an argument, so the worker never pays for getServerDetails — the same trick the probe
+// worker uses for its own hostname. Ports are free.
+export const CRACK_WORKER_RAM = 2.2;
+
+// Log lines scraped out of darknet servers with heartbleed(), keyed by host. This is
+// Stage A of the cracking pipeline (docs/API-COVERAGE-AUDIT.md §5.2): the server model
+// list is "intentionally undocumented" per the API docs, so before anything can guess a
+// password we need a corpus of what these logs actually say.
+export const LOGS_FILE = "/data/darknet-logs.txt";
+
 // Order matters: the first failing check names the reason, so reasons stay stable for
 // tests and for the tool's status output.
 /** @type {Array<[string, (c: any, linked: Set<string>, ram: number) => boolean]>} */
@@ -155,6 +166,60 @@ export function mergeDarknetMap(existing, reports) {
 }
 
 /**
+ * Which uncracked servers are worth a heartbleed log capture, and where to run it from.
+ *
+ * heartbleed() and authenticate() only reach servers *directly connected* to the server
+ * the script runs on, so every target needs a vantage point: the already-cracked host
+ * whose probe report saw it (`seenFrom`, set by mergeDarknetMap).
+ *
+ * Two hard filters come straight from the API docs: logs cannot be scraped from a server
+ * whose required charisma exceeds the player's, and an offline server is unreachable.
+ * Easiest-first ordering means a run that gets cut short still spends its time on the
+ * targets most likely to return something.
+ *
+ * @param {{map: Record<string, any>, solved: readonly string[], charisma: number}} input
+ * @returns {Array<{from: string, target: string, requiredCharisma: number}>}
+ */
+export function planCrackTargets({ map, solved, charisma }) {
+  const known = new Set(solved);
+
+  return Object.entries(map)
+    .filter(([host, e]) => !known.has(host) && e.isOnline !== false && e.seenFrom)
+    .filter(([, e]) => (e.requiredCharisma ?? 0) <= charisma)
+    .map(([host, e]) => ({
+      from: e.seenFrom,
+      target: host,
+      requiredCharisma: e.requiredCharisma ?? 0,
+    }))
+    .sort(
+      (a, b) => a.requiredCharisma - b.requiredCharisma || a.target.localeCompare(b.target)
+    );
+}
+
+/**
+ * Fold heartbleed captures into the log store, without duplicating lines.
+ *
+ * Servers add their own messages on a timer (`logTrafficInterval`), so repeat captures
+ * overlap. Hosts absent from this round keep whatever was learned before.
+ *
+ * @param {Record<string, {logs: string[]}>} existing
+ * @param {Array<{host: string, logs: string[]}>} reports
+ */
+export function mergeHeartbleedLogs(existing, reports) {
+  const store = { ...existing };
+
+  for (const { host, logs } of reports) {
+    if (!logs || logs.length === 0) continue;
+    const seen = store[host]?.logs ?? [];
+    const fresh = logs.filter((line) => !seen.includes(line));
+    if (fresh.length === 0 && host in store) continue;
+    store[host] = { ...store[host], logs: [...seen, ...fresh] };
+  }
+
+  return store;
+}
+
+/**
  * Which known servers can run the probe worker right now: same exec rules as the
  * stasis worker, just a much smaller RAM bill.
  * @param {ReturnType<typeof buildCandidate>[]} candidates
@@ -186,6 +251,16 @@ export function loadDarknetMap(ns) {
 /** @param {NS} ns */
 export function saveDarknetMap(ns, map) {
   ns.write(MAP_FILE, JSON.stringify(map, null, 2), "w");
+}
+
+/** @param {NS} ns */
+export function loadHeartbleedLogs(ns) {
+  return parseJsonObject(ns.read(LOGS_FILE));
+}
+
+/** @param {NS} ns */
+export function saveHeartbleedLogs(ns, logs) {
+  ns.write(LOGS_FILE, JSON.stringify(logs, null, 2), "w");
 }
 
 /**

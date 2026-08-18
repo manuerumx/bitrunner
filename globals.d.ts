@@ -19,6 +19,14 @@ declare global {
   type CrimeType = Parameters<NS["sleeve"]["setToCommitCrime"]>[1];
   type HacknetServerHashUpgrade = Parameters<NS["hacknet"]["spendHashes"]>[0];
   type GoOpponent = Parameters<NS["go"]["resetBoardState"]>[0];
+  // Darkweb program filenames. The game validates these strictly — purchaseProgram takes
+  // the literal union, not `string`, so PROGRAMS in constants.js must be typed against it.
+  type ProgramName = Parameters<NS["singularity"]["purchaseProgram"]>[0];
+  // Live sleeve task as reported by getTask(); null while the sleeve is idle.
+  type SleeveTask = ReturnType<NS["sleeve"]["getTask"]>;
+  // Corporation string-literal unions the game validates strictly.
+  type CorpCityName = Parameters<NS["corporation"]["getMaterial"]>[1];
+  type CorpMaterialName = Parameters<NS["corporation"]["getMaterial"]>[2];
 
   // Port IPC payloads — the JSON shapes passed through the netscript ports listed in
   // constants.js PORTS. Writers and readers both annotate against these so the contract
@@ -56,6 +64,14 @@ declare global {
     mode: "link" | "unlink";
     success: boolean;
     code: number;
+    message: string;
+  }
+  // One heartbleed capture. Written by tools/darknet-crack-worker.js running on a cracked
+  // darknet server, consumed by tools/darknet-scan.js.
+  interface CrackReport {
+    host: string;
+    logs: string[];
+    success: boolean;
     message: string;
   }
   // One probe-worker's view of its darknet neighborhood: cracking intel per neighbor.
