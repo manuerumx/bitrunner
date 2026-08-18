@@ -45,6 +45,36 @@ function getBestUpgrade(ns) {
   return best;
 }
 
+/**
+ * Which node's hash cache to enlarge, if any.
+ *
+ * Cache raises hashCapacity(). Unlike level/RAM/cores it adds no production, so the
+ * payback ranking above doesn't apply to it — a cache upgrade is worth buying only as
+ * evidence that hashes are being *wasted*, which is the bar sitting near full. Below the
+ * threshold the spend loop is draining hashes fast enough and the money would be better
+ * spent on production.
+ *
+ * Cheapest-first among eligible nodes: capacity is global, so it makes no difference which
+ * node carries it. getCacheUpgradeCost returns Infinity for a maxed cache.
+ *
+ * @param {NS} ns
+ * @param {number} fillThreshold  fraction of capacity that counts as "about to waste"
+ * @returns {{node: number, cost: number} | null}
+ */
+export function pickCacheUpgrade(ns, fillThreshold = DEFAULTS.hacknetCacheFillThreshold) {
+  const capacity = ns.hacknet.hashCapacity();
+  if (capacity <= 0) return null; // no hacknet servers in this BitNode
+  if (ns.hacknet.numHashes() / capacity < fillThreshold) return null;
+
+  let best = null;
+  for (let i = 0; i < ns.hacknet.numNodes(); i++) {
+    const cost = ns.hacknet.getCacheUpgradeCost(i);
+    if (!isFinite(cost) || cost <= 0) continue;
+    if (!best || cost < best.cost) best = { node: i, cost };
+  }
+  return best;
+}
+
 // Richest rooted server — the best place to spend "Increase Maximum Money" / "Reduce Minimum
 // Security" hashes, since boosting it compounds HWGW income. maxMoney is a cheap proxy (no
 // hackAnalyze) that keeps this manager's RAM low.
@@ -143,6 +173,14 @@ export async function main(ns) {
       }
       if (!success) break;
       spent += best.cost;
+    }
+
+    // Buy hash capacity before spending, while the bar still reflects how full it got between
+    // cycles — spendHashes drains it to near zero, which would hide the evidence.
+    const cache = pickCacheUpgrade(ns);
+    if (cache && spent + cache.cost <= budget && ns.hacknet.upgradeCache(cache.node, 1)) {
+      spent += cache.cost;
+      log(ns, `Hacknet: enlarged node ${cache.node} cache for ${formatMoney(cache.cost)}`);
     }
 
     // Hashes are a separate currency from cash — spend them every cycle so a full hash bar (which

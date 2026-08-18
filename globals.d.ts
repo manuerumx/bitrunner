@@ -19,6 +19,7 @@ declare global {
   type CrimeType = Parameters<NS["sleeve"]["setToCommitCrime"]>[1];
   type HacknetServerHashUpgrade = Parameters<NS["hacknet"]["spendHashes"]>[0];
   type GoOpponent = Parameters<NS["go"]["resetBoardState"]>[0];
+  type BladeburnerCityName = Parameters<NS["bladeburner"]["switchCity"]>[0];
   // Darkweb program filenames. The game validates these strictly — purchaseProgram takes
   // the literal union, not `string`, so PROGRAMS in constants.js must be typed against it.
   type ProgramName = Parameters<NS["singularity"]["purchaseProgram"]>[0];
@@ -72,6 +73,14 @@ declare global {
     host: string;
     logs: string[];
     success: boolean;
+    message: string;
+  }
+  // One IPvGO cheat attempt. Written by tools/ipvgo-cheat-worker.js, consumed by
+  // tools/ipvgo.js. "played"/"failed" consumed the turn; "declined"/"unavailable" did not.
+  interface GoCheatReport {
+    x: number;
+    y: number;
+    status: "played" | "failed" | "declined" | "unavailable";
     message: string;
   }
   // One probe-worker's view of its darknet neighborhood: cracking intel per neighbor.

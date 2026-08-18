@@ -107,6 +107,19 @@ export async function main(ns) {
     }
 
     const currentWork = ns.singularity.getCurrentWork();
+
+    // Never interrupt a graft. tools/grafting.js buys augmentations with money instead of
+    // reputation — the very constraint this manager exists to grind against — and
+    // workForFaction() would cancel it. Grafting appears as its own work type
+    // (GraftingTask), so it is distinguishable from ordinary faction work.
+    if (currentWork && currentWork.type === "GRAFTING") {
+      /** @type {FactionStatus} */
+      const status = { currentFaction: null, rep: 0, targetRep: 0, availableAugs: 0 };
+      writePortData(ns, PORTS.FACTION_STATUS, status);
+      await ns.sleep(30000);
+      continue;
+    }
+
     const bestFaction = getBestFactionForWork(ns);
 
     if (bestFaction) {

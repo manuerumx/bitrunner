@@ -86,6 +86,8 @@ src/
 │   ├── manager-health.js                        ← daemon status vocabulary + RAM verdicts
 │   ├── purchasing.js                            ← shared budget/shopping-list planner
 │   ├── programs.js, market.js, sleeves.js, corp.js  ← per-subsystem decision logic
+│   ├── gang.js, grafting.js, stanek.js, go.js   ← per-subsystem decision logic
+│   ├── formulas.js                              ← Formulas.exe gate (and what it is NOT used for)
 ├── managers/                                  ← Core subsystem managers
 │   ├── rooter.js, hack-coordinator.js
 │   ├── server-buyer.js, hacknet-manager.js
@@ -108,7 +110,9 @@ src/
     ├── stasis.js, stasis-worker.js             ← darknet stasis links
     ├── darknet-scan.js, darknet-probe-worker.js ← darknet mapping & cracking intel
     ├── darknet-crack-worker.js                   ← heartbleed log capture (peek-only)
-    └── ipvgo.js                                 ← IPvGO subnet auto-player
+    ├── grafting.js                               ← graft augs without faction rep (SF-10)
+    ├── stanek.js                                 ← Stanek's Gift layout + charging (BN-13)
+    └── ipvgo.js, ipvgo-cheat-worker.js           ← IPvGO subnet auto-player (+ opt-in cheats)
 ```
 
 ---
@@ -168,11 +172,18 @@ Persistent daemons that run on the home server. Each handles one game subsystem 
 - **Surplus RAM**: HWGW against a handful of targets can't consume a large botnet, so leftover RAM is soaked each cycle — either by `xp.js` (hacking EXP) when `xpFarmRAM` is on, or by `share.js` (faction reputation) while grinding a faction. See [Surplus RAM: EXP vs Reputation](#surplus-ram-exp-vs-reputation).
 
 #### `managers/server-buyer.js` — Purchased Server Management
+> **Ceiling now comes from the game.** `ns.cloud.getRamLimit()` (0.05 GB) replaced the hardcoded
+> `DEFAULTS.maxPurchasedServerRAM` of 1 PB, which would be wrong if this fork's cap differs or
+> scales with progression. `pickPurchaseRam` / `pickUpgradeTarget` are exported and unit-tested.
 - **Cycle**: Every 60 seconds
 - **What it does**: Buys servers up to the 25-server limit, then upgrades the smallest one. Never spends more than 50% of your cash on a single purchase. Deploys worker scripts automatically.
 - **Strategy**: Starts with small servers (8 GB) to get RAM online fast, then doubles the smallest server's RAM each cycle.
 
 #### `managers/hacknet-manager.js` — Hacknet Node Automation
+> **Buys hash capacity too.** `pickCacheUpgrade` enlarges a node's cache when the hash bar sits
+> ≥80% full (`DEFAULTS.hacknetCacheFillThreshold`). Cache adds no production, so the payback
+> ranking used for level/RAM/cores doesn't apply — the trigger is evidence hashes are being
+> *wasted*. It runs before `spendHashes`, which would otherwise drain away that evidence.
 - **Cycle**: Every 10 seconds
 - **What it does**: Buys and upgrades hacknet nodes (level, RAM, cores) by best payback ratio, spending up to 10% of your money per cycle. On BitNodes with Hacknet **Servers**, it also spends accumulated **hashes** every cycle so they never cap out and waste.
 - **Money strategy**: Picks the upgrade with the lowest payback time (cost ÷ extra production), not the cheapest — and buys one new node per cycle so the node count keeps growing.
@@ -220,7 +231,15 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 #### `advanced/gang-manager.js` — Gang Operations
 - **Requires**: Source-File 2 (or BitNode 2), gang must be created first
 - **Cycle**: Every 10 seconds
-- **What it does**: Recruits members, assigns tasks based on stats (training → mugging → human trafficking), buys equipment, ascends members when multiplier gain ≥1.5x, manages territory warfare (enables when win chance >55%).
+- **What it does**: Recruits members, assigns tasks, buys equipment, ascends members when multiplier gain ≥1.5x, manages territory warfare (enables when win chance >55%).
+- **Task ranking depends on `Formulas.exe`.** With it, tasks are scored per member with
+  `formulas.gang.moneyGain/respectGain/wantedLevelGain` — exact numbers, taking the three objects
+  the manager already holds. Without it, the original four-threshold ladder (train → vigilante →
+  mug → traffick) is used **unchanged**. There is deliberately no third path: deriving the game's
+  scaling by hand would be a guess, and a wrong constant would quietly perform worse than the
+  ladder. `tools/program-buyer.js` buys `Formulas.exe`, which is what makes this switch flip.
+- **Equipment is ranked, not swept.** `getEquipmentStats`/`getEquipmentType` score each item by
+  usable stat gain per dollar — a combat gang no longer spends on charisma and hacking gear.
 
 #### `advanced/sleeve-manager.js` — Sleeve Automation
 - **Requires**: Source-File 10
@@ -242,6 +261,16 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 - **Requires**: Source-File 6 or 7
 - **Cycle**: Every 5 seconds
 - **What it does**: Manages stamina (trains when low), reduces chaos via diplomacy, attempts Black Ops when success chance ≥80%, runs operations/contracts based on success probability. Upgrades skills with priority on Blade's Intuition, Cloak, and Overclock.
+- **It can now enlist itself.** `inBladeburner()` (0 GB) replaced the try/catch probe — which
+  could not distinguish "no Source File" from "not joined yet" — and the manager calls
+  `joinBladeburnerDivision()` then `joinBladeburnerFaction()`. Previously you had to join by hand
+  before it would do anything.
+- **It relocates.** Cities are scored `population / (1 + chaos)` (a stated heuristic, not a game
+  formula) and it moves when another city beats the current one by 1.25×. The margin stops it
+  ping-ponging between two comparable cities every 5 s, since each switch costs action time.
+  Before this it only ever ran Diplomacy in place, grinding one city down instead of leaving.
+- **It brings the team.** `setTeamSize` commits the squad on Operations and Black Ops, where team
+  members raise success chance; Contracts and General actions are solo and get nobody.
 
 ---
 
@@ -406,6 +435,46 @@ All four are launched by the daemon and all four **exit instead of looping** —
 - **`market-access.js`** — climbs WSE → TIX API → 4S Data → 4S TIX. A ladder, not a shopping list: an unaffordable rung stops the climb, because buying the TIX API without the WSE account underneath it buys something unusable. Prices come from `getConstants()` (0 GB), so nothing is hardcoded. Total 12.3 GB, no Source-File multiplier.
 - **`corp-boost.js`** (SF-3) — stocks boost materials toward `DEFAULTS.corpBoostTargets` and turns on MarketTA2 pricing. Uses `bulkPurchase`, not `buyMaterial`: `buyMaterial` sets a per-second buy *rate* that would keep running after the script exits and overfill the warehouse, which stalls production outright. Purchases are capped by free warehouse space with `DEFAULTS.corpWarehouseHeadroom` left for output. Kept separate from `corp-manager.js` so its (documented) 20 GB-per-call cost is borrowed, not resident.
 
+#### `tools/grafting.js` — Graft Augmentations Without Reputation (SF-10)
+```
+run src/tools/grafting.js              # what you can afford to graft right now
+run src/tools/grafting.js graft        # graft the cheapest affordable augmentation
+run src/tools/grafting.js graft <name> # graft a specific one (exact name)
+```
+Grafting buys an augmentation for **money alone — no faction reputation** — which is precisely the
+constraint `faction-manager.js` spends its entire cycle grinding against. That makes it the
+highest-leverage subsystem for a cash-rich, reputation-poor run. Gated on SF-10, the same
+Source-File that unlocks sleeves, so if the sleeve manager runs, grafting is available now.
+
+**Manual on purpose.** `graftAugmentation` cancels whatever you are doing, and
+`faction-manager.js` calls `workForFaction` every 30 s — so the daemon would have cancelled every
+graft within half a minute. The manager now detects an in-progress graft (`getCurrentWork()`
+reports `type: "GRAFTING"`) and leaves it alone. Any *other* work loop will still fight it.
+
+Prerequisites are not pre-checked: `getGraftableAugmentations()` already excludes augmentations you
+own but doesn't check prerequisites, and `singularity.getAugmentationPrereq` costs 80 GB at SF-4.1.
+`graftAugmentation()` returns false for an unmet prerequisite, which is the same answer for free.
+NeuroFlux Governor is never grafted — its price escalation drags the whole catalogue up with it,
+the same trap `augmentation-buyer.js` defers for.
+
+#### `tools/stanek.js` — Stanek's Gift (BN-13 / SF-13)
+```
+run src/tools/stanek.js          # board size and every placed fragment
+run src/tools/stanek.js place    # greedily fill the board
+run src/tools/stanek.js charge   # charge every fragment, evenly, forever
+```
+Placement is greedy and place-as-you-go: `canPlaceFragment` reflects live board state, so each
+success narrows what fits next. All four rotations of a cell are tried before moving on, so a
+fragment settles into the first cell it fits in *any* orientation instead of skipping across the
+board and leaving holes. Hacking fragments claim space first (this suite lives on hacking income),
+boosters last — a booster placed before the fragment it amplifies just occupies that fragment's
+space. Charging sweeps all fragments evenly, because the effect scales with the *lowest* charge.
+
+**This tool cannot accept the gift.** `ns.stanek.acceptGift()` is irreversible and permanently
+shrinks home RAM — the resource `daemon.js` budgets every manager against. It is not referenced
+anywhere in the suite, so no script can accept it by accident. Same reasoning that keeps
+`augmentation-buyer.js install` manual.
+
 #### `tools/ipvgo.js` — IPvGO Auto-Player
 ```
 run src/tools/ipvgo.js
@@ -417,6 +486,27 @@ Mechanics worth knowing:
 - The script deliberately avoids `ns.go.analysis.getValidMoves()` — it costs 8 GB of RAM; the try/catch guard is free.
 - A board too rugged to host a base (no viable edge streak) is rerolled after 500 ms against the **same** opponent — board generation is time-seeded — so difficult factions don't get silently skipped.
 - Base spots are chosen flank-aware: an interior streak needs 5 open cells (the two sealing columns each consume one), while a streak against the board edge or dead nodes needs only 4.
+- **Win tracking** after each game comes from `analysis.getStats()` (0 GB): W/L, current and best
+  streak, and the faction's current stat bonus, plus a callout for the opponent with the worst win
+  rate — that's where the strategy is actually failing.
+- **The 16 GB analysis calls are deliberately unused.** `getChains`, `getLiberties` and
+  `getControlledEmptyNodes` would let the mover reason about capture and defence instead of
+  patterns, but they cost 16 GB *each*; this script already declines `getValidMoves` at 8 GB.
+
+##### Cheating — opt-in (`run src/tools/ipvgo.js cheat`, SF-14.2)
+A failed cheat skips your turn, and after the first attempt a failure carries a **~10% chance of
+instant ejection from the subnet**. So the script cheats at exactly one moment: when the fill stage
+is exhausted and it was **about to pass anyway** — a skipped turn then costs a turn already being
+given up. `shouldCheat` also raises the bar from 55% to 90% from the second attempt onward, since
+that is when ejection becomes possible and the success chance is decaying with each try. The target
+is an opponent router touching one of ours; removing an isolated stone deep in their own area
+concedes a turn for nothing.
+
+The cheat runs in `tools/ipvgo-cheat-worker.js`, not inline. Bitburner charges static RAM for every
+`ns.<fn>` the *source* mentions, so an `if (cheating)` guard would still bill 10 GB on every run for
+everyone — including players without SF-14.2, for whom the calls only throw. Delegating costs
+`ipvgo.js` 1 GB (`ns.run`) and pays the 11.6 GB only while a cheat is in flight. Same pattern as the
+darknet workers.
 
 ---
 
