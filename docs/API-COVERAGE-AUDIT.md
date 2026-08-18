@@ -73,7 +73,7 @@ No `const { ... } = ns` destructuring exists anywhere in `src/`, so no aliasing 
 | `ns.gang` | **15 / 26** | 3 | Solid. Task choice is hardcoded rather than derived from `getTaskStats`. |
 | `ns.hacknet` | **16 / 21** | 2 | Near-complete. Missing cache upgrades (hash capacity ceiling). |
 | `ns.cloud` (fork) | **7 / 9** | 1 | Buy + upgrade both implemented. RAM cap hardcoded instead of `getRamLimit()`. |
-| `ns.go` + `GoAnalysis` + `GoCheat` | **6 / 23** | 3 | `ipvgo.js` uses `getValidMoves` only; 9 analysis fns and all 6 cheats unused. |
+| `ns.go` + `GoAnalysis` + `GoCheat` | **5 / 23** | 3 | `ipvgo.js` uses the core namespace only. **All 10 analysis fns and all 6 cheats unused** — see the correction in §8. |
 | `ns.codingcontract` | **4 / 8** | 1 | Solver covers the loop. `getContractTypes` would harden dispatch. |
 | `ns.grafting` | **0 / 5** | 5 | Entire subsystem unautomated. |
 | `ns.stanek` | **0 / 11** | 0* | Unreachable without the Stanek gift (BN13 / SF13). |
@@ -449,7 +449,7 @@ Add `setToBladeburnerAction` so sleeves feed §5.7 contracts instead of committi
 | **`cloud.getRamLimit`** | Documented as *"the maximum RAM that a cloud server can have"* (`.d.ts:4293`) — per-server, so it is the right replacement for `DEFAULTS.maxPurchasedServerRAM: 1048576` at `server-buyer.js:21,39`. 0.05 GB. Hardcoding is wrong if this fork's cap differs from vanilla's 1 PB or scales with progression. |
 | **Grafting** | 0/5, gated on **SF10** — the same Source-File that already unlocks `sleeve-manager.js`, so if sleeves run, grafting is available *now*. `getGraftableAugmentations` + `getAugmentationGraftPrice` (21.6 GB for all five, no SF multiplier) — grafting buys augs *without faction rep*, which is exactly the constraint `faction-manager.js` spends its whole cycle grinding. Highest-leverage P2. Requires being in New Tokyo (needs `travelToCity`, also unmapped). Grafting occupies the player and blocks other work — must respect the same "don't override the player" rule as `manager-toggle.js`. |
 | **Formulas** | `formulas.hacking.*` would replace the hand-rolled math in `batch-calculator.js` with exact values, and `formulas.dnet.getAuthenticateTime`/`getHeartbleedTime` are required to size §5.2's threads properly. Costs 0 GB but requires `Formulas.exe` on home — which §5.1 can buy. Gate every call behind `fileExists("Formulas.exe", "home")`. |
-| **IPvGO** | `ipvgo.js` uses `getValidMoves` only. `analysis.getChains`/`getLiberties`/`getControlledEmptyNodes` (0 GB, already-paid namespace) would let the mover evaluate capture/defense instead of pattern heuristics; `analysis.getStats` gives per-opponent win rates for the result tracking already noted as missing. `GoCheat` (6 fns) is entirely unused — `getCheatSuccessChance` before any cheat, since a failed cheat ends the game. |
+| **IPvGO** | ~~`ipvgo.js` uses `getValidMoves` only.~~ **Two errors here, corrected in §8:** the script never calls `getValidMoves` (the match came from the comment at `ipvgo.js:161` explaining why it avoids it), and `analysis.getChains`/`getLiberties`/`getControlledEmptyNodes` cost **16 GB each**, not 0 GB. What is genuinely free: `analysis.getStats` (0 GB) for per-opponent win rates, and `getMoveHistory`/`opponentNextTurn` (0 GB). `GoCheat` (6 fns) is unused; a failed cheat skips your turn and, after the first attempt, carries a ~10% chance of ejection from the subnet — it is not an automatic loss. |
 | **Stanek** | 0/11 (20.45 GB for the full set), unreachable without the gift. Spec only if BN13/SF13 is in play: `acceptGift` is **irreversible and shrinks home RAM** — must stay a manual decision, like `augmentation-buyer.js install`. |
 
 ---
@@ -558,3 +558,106 @@ builds the corpus that would justify it; if a pattern emerges, the generator bec
 addition on top of `planCrackTargets` and `mergeHeartbleedLogs`.
 
 P2/P3 items (§5.7-5.14) were out of scope for this pass and remain open.
+
+---
+
+## 8. What was implemented — P2/P3 (2026-08-18)
+
+All eight §5.7-5.14 items. **255 tests pass** (189 after the P0/P1 pass, +66), `npm run check` clean.
+
+### Two corrections to this audit, found while implementing
+
+Both concern §5.13, and both were my own errors:
+
+1. **`ipvgo.js` never called `analysis.getValidMoves`.** The usage scan matched the string inside
+   the comment at `ipvgo.js:161` that explains why the script *avoids* it. This is exactly the
+   false-positive class §1 warns about — but the adjudication pass there only re-checked functions
+   reported as *missing*, never those reported as *used*, so a comment could inflate coverage
+   without being caught. `GoAnalysis` was 0/10 used, not 1/10; the §2 row is corrected.
+2. **The analysis functions are not free.** `getChains`, `getLiberties` and
+   `getControlledEmptyNodes` cost **16 GB each** — I recorded them as 0 GB. Wiring all three in
+   would have added 48 GB to a script that already declines `getValidMoves` at 8 GB. The
+   recommendation was therefore unsound as written, and was not followed.
+
+Method lesson worth keeping: re-check the *used* list by bare identifier too, not just the missing
+list, and pull the RAM figure for anything a recommendation depends on.
+
+### Shipped
+
+| Item | What changed | Notes |
+|---|---|---|
+| **§5.10 `cloud.getRamLimit`** | `server-buyer.js` exports `pickPurchaseRam` / `pickUpgradeTarget`, both reading the live per-server ceiling. `DEFAULTS.maxPurchasedServerRAM` deleted. | Stub-tested. |
+| **§5.9 Hacknet cache** | `pickCacheUpgrade` buys capacity when the hash bar sits ≥80% full. Runs *before* `spendHashes`, which would otherwise drain the evidence. | Payback ranking deliberately not used — cache adds no production. |
+| **§5.7 Bladeburner** | `inBladeburner()` replaces the try/catch probe; joins division then faction; relocates on a population/chaos score with a 1.25× margin; commits the squad via `setTeamSize` on Operations and Black Ops. | `pickBestCity`/`teamSizeFor` stub-tested. |
+| **§5.8 Gang** | Task ranking uses `formulas.gang.moneyGain/respectGain/wantedLevelGain` when `Formulas.exe` is owned; equipment ranked by usable stat gain per dollar via `getEquipmentStats`/`getEquipmentType`. | See "no invented math" below. |
+| **§5.13 IPvGO (analysis)** | Per-opponent W/L, streak and bonus reported after each game via `analysis.getStats()` (0 GB), weakest opponent called out. | The 16 GB analysis calls were declined — see corrections above. |
+| **§5.13 IPvGO (cheats)** | Opt-in `run ipvgo.js cheat`. Cheat runs in `tools/ipvgo-cheat-worker.js`. | See "cheat design" below. |
+| **§5.14 Stanek** | `tools/stanek.js` — status, greedy `place`, continuous `charge`. | **`acceptGift` is not referenced anywhere**, so no script can accept the gift. |
+| **§5.11 Grafting** | `tools/grafting.js` (manual), plus a guard in `faction-manager.js`. | See "grafting interaction" below. |
+
+### Three decisions worth recording
+
+**No invented math (§5.8).** The plan was to rank gang tasks from `getTaskStats` weights against
+member stats. That means reproducing the game's scaling formula from memory, and a wrong constant
+would silently produce worse assignments than the four-threshold ladder it replaced. Instead:
+`formulas.gang.*` is exact and takes precisely the three objects the manager already holds, so it
+became the real implementation, and the **existing ladder is the unchanged fallback** when
+`Formulas.exe` isn't owned. `selectBestTask` is tested against supplied gains and derives nothing.
+This also gives `program-buyer.js` buying `Formulas.exe` a visible payoff.
+
+**Grafting interaction (§5.11).** `graftAugmentation` cancels current work, and
+`faction-manager.js` calls `workForFaction` every 30 s — so the daemon would have cancelled every
+graft within half a minute. Grafting reports as its own work type (`GraftingTask`, `type:
+"GRAFTING"`), so the manager now detects an in-progress graft and leaves it alone. Without that
+guard the tool would have been useless, and no unit test would have revealed it.
+
+**Cheat design (§5.13).** Static RAM is charged for every `ns.<fn>` the *source* mentions, so an
+`if (cheating)` guard saves nothing — every player would pay 10 GB for `removeRouter` and the two
+probes, including those without SF-14.2 for whom the calls only throw. The cheat therefore runs in
+a worker (11.6 GB, transient), leaving `ipvgo.js` +1 GB for `ns.run`. It fires at one point only:
+when the fill stage is exhausted and the script was **about to pass anyway**, so a failed cheat
+costs a turn that was already being given up. The residual risk is the documented ~10% ejection
+chance on failures after the first attempt, which is why `shouldCheat` applies a higher bar
+(90% vs 55%) from the second attempt on.
+
+### Deliberately not done
+
+**§5.12 Formulas in `batch-calculator.js` — considered and declined.** `formulas.hacking.growThreads`
+is exact where `ns.growthAnalyze` approximates, but the gap is a few threads per batch, and
+`batch-calculator.js` drives every HWGW batch the suite dispatches — up to `hwgwMaxBatches` per
+target per cycle through a timing-critical landing sequence. A Formulas-gated branch there means
+two code paths through the income engine, with the live one depending on whether `Formulas.exe`
+happens to have been bought yet — so the tested path and the running path could silently diverge.
+The reasoning is recorded at the top of `lib/formulas.js` so it isn't re-litigated. The Formulas
+budget went to gang ranking instead, where there was no existing behaviour to regress.
+
+`formulas.dnet.getHeartbleedTime` for sizing the crack worker's threads is still open — the crack
+loop currently runs single-threaded, which is correct but slow. Worth doing once §5.2 Stage A has
+produced a corpus and the loop is proven.
+
+**`GoCheat.playTwoMoves` and the other four cheat functions** are unwired. `removeRouter` is the
+one that fits the "about to pass anyway" trigger; the others need a strategy change to be useful,
+which is a bigger question than API coverage.
+
+### Caught in review, after the first pass
+
+Three fixes landed after the implementation was first called done:
+
+- **A failed cheat used to loop back into the cheat path.** `tryCheat` returned true for both
+  "played" and "failed", and the caller `continue`d — so a failed cheat sent the fill stage round
+  again, found nothing again, and fired another cheat in the same turn, each carrying its own
+  ejection risk, until the decaying odds finally fell below the threshold. Only "played" returns
+  true now; a failure falls through and passes, which is what the script did before cheats existed.
+- **A test that could not fail.** `pickBestCity is deterministic when every city is identical`
+  called the same pure function twice with the same stub and compared the results. The real
+  hazard is different — `getCityEstimatedPopulation` is an *estimate* that jitters — and the
+  guard against it is `CITY_SWITCH_MARGIN`, which that test never touched. Replaced with
+  `shouldSwitchCity`, extracted and tested at and around the margin.
+- `ipvgo.js` had its imports above the file header comment, unlike every other file in the repo.
+
+### Still unverified without the game
+
+Everything from §7 stands, plus: the Bladeburner city score (`population / (1 + chaos)`) is a
+stated heuristic, not a game formula; the Stanek fragment ranking prefers hacking types on the
+assumption this suite lives on hacking income; and no cheat has ever been played, so the ~10%
+ejection figure is quoted from the API docs rather than observed.

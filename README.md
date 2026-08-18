@@ -70,6 +70,12 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 | `run src/tools/market-access.js dry` | `dry` | — | Reports the next World Stock Exchange unlock it would buy (WSE → TIX → 4S → 4S TIX). Buys nothing. |
 | `run src/tools/corp-boost.js dry` | `dry` | SF-3 | Reports the boost materials it would stock per division/city. Buys nothing. |
 | `run src/tools/darknet-scan.js crack` | `crack` | Darknet | Heartbleeds every reachable uncracked darknet server and stores the captured logs. **Read-only** — see below. |
+| `run src/tools/grafting.js` | none | SF-10 | Lists augmentations you can graft right now. Grafting needs **money only — no faction reputation.** |
+| `run src/tools/grafting.js graft [name]` | optional name | SF-10 | Travels to New Tokyo and grafts the cheapest affordable augmentation (or the named one). Manual on purpose — see below. |
+| `run src/tools/stanek.js` | none | BN-13/SF-13 | Shows Stanek's Gift board and every placed fragment. |
+| `run src/tools/stanek.js place` | `place` | BN-13/SF-13 | Greedily fills the board, hacking fragments first, boosters last. |
+| `run src/tools/stanek.js charge` | `charge` | BN-13/SF-13 | Charges every placed fragment, evenly, forever. Fragments do nothing until charged. |
+| `run src/tools/ipvgo.js cheat` | `cheat` | SF-14.2 | IPvGO auto-player with cheating enabled. **Opt-in** — see below. |
 
 `analyze.js`, `connect.js`, and `prep-server.js` **require a hostname argument** — running them bare just prints usage.
 
@@ -78,6 +84,26 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 > *itself*, it can never launch — and the dashboard shows the same `🔒 LOCKED` it uses for a
 > missing Source File, so the two are indistinguishable. `ram-report.js` calls that case
 > `impossible` and names the script.
+
+> 🧬 **Grafting is manual because it takes over the player.** `graftAugmentation` cancels
+> whatever you're currently doing, and the faction manager's 30-second work loop would cancel
+> the graft right back. It no longer does — `faction-manager.js` detects an in-progress graft
+> and leaves it alone — but any *other* work loop you run will still fight it. The payoff is
+> real: grafting buys augmentations for cash with **no reputation requirement**, which is the
+> exact constraint the faction manager spends its whole cycle grinding against.
+
+> 🕯️ **`stanek.js` cannot accept the gift, deliberately.** Accepting Stanek's Gift is
+> irreversible and permanently shrinks home RAM — the resource the daemon budgets every
+> manager against. `ns.stanek.acceptGift()` is not referenced anywhere in this suite, so no
+> script can accept it by accident. Take it from the Church of the Machine God in Chongqing
+> yourself, then use this tool to lay out and charge the board.
+
+> 🎲 **IPvGO cheating is opt-in and costs a real risk.** A failed cheat skips your turn, and
+> after the first attempt a failure carries a ~10% chance of instant ejection from the subnet.
+> The script only cheats at one moment: when it has run out of legal moves and was **about to
+> pass anyway**, so a failure costs a turn already being given up. It also demands better odds
+> (90% vs 55%) from the second attempt onward, since that's when ejection becomes possible.
+> The cheat itself runs in a separate worker so players without SF-14.2 don't pay its 10 GB.
 
 > 🔓 **`darknet-scan.js crack` does not guess passwords.** It captures server logs with
 > `heartbleed(peek: true)` — nothing is consumed, nothing is attempted, no `authenticate()`
@@ -120,6 +146,9 @@ You *can* launch a single manager by hand for testing (e.g. `run src/advanced/st
 | Script | Needs |
 |--------|-------|
 | `augmentation-buyer.js`, `reset-prep.js`, `backdoor.js` | **SF-4** (Singularity) |
+| `grafting.js` | **SF-10** — same Source-File as sleeves, so if sleeves run, grafting is available |
+| `stanek.js` | BitNode 13 / SF-13, and the gift must already be accepted |
+| `ipvgo.js cheat` | **SF-14.2** (plain `ipvgo.js` needs nothing) |
 | `program-buyer.js` (auto), `home-upgrader.js` (auto) | **SF-4** — and note the ×16/×4/×1 RAM multiplier by SF-4 level |
 | `market-access.js` (auto) | No Source File — buys WSE/TIX/4S itself |
 | `corp-boost.js` (auto) | SF-3 / BitNode 3 |

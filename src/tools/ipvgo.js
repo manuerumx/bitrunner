@@ -10,6 +10,17 @@
  * router, 'O' = opponent, '.' = empty, '#' = dead node.
  */
 
+import { pickCheatTarget, summarizeGoStats } from "/src/lib/go.js";
+import { consumePortData, PORTS } from "/src/lib/port-registry.js";
+
+// Games an opponent needs before its win rate is worth calling out — one loss out of one
+// game is not a weakness, it's a sample size of one.
+const MIN_GAMES_FOR_RECORD = 3;
+
+// Cheating is delegated to a worker so this script never pays its 10 GB. See tryCheat.
+const CHEAT_WORKER = "/src/tools/ipvgo-cheat-worker.js";
+const CHEAT_TIMEOUT_MS = 10000;
+
 /** @type {GoOpponent[]} */
 const OPPONENTS = [
   "Netburners",
@@ -33,8 +44,80 @@ const DIRS = [
   { dx: 1, dy: 0 },
 ];
 
+/**
+ * Running record after a finished game. ns.go.analysis.getStats() costs 0 GB, so this is
+ * free reporting — the win/loss tracking the script previously had no notion of.
+ *
+ * The weakest opponent is called out because that is where the strategy is actually
+ * failing; the per-faction bonus is what the wins are for.
+ *
+ * @param {NS} ns
+ * @param {string} justPlayed
+ */
+function printRecord(ns, justPlayed) {
+  const rows = summarizeGoStats(ns.go.analysis.getStats());
+  const mine = rows.find((r) => r.opponent === justPlayed);
+  if (mine && mine.winRate !== null) {
+    ns.print(
+      `  ${justPlayed}: ${mine.wins}W-${mine.losses}L (${(mine.winRate * 100).toFixed(0)}%), ` +
+        `streak ${mine.winStreak} (best ${mine.highestWinStreak}), bonus +${mine.bonusPercent}%`
+    );
+  }
+  const weakest = rows.find((r) => r.winRate !== null && r.played >= MIN_GAMES_FOR_RECORD);
+  if (weakest && weakest.opponent !== justPlayed) {
+    ns.print(`  weakest: ${weakest.opponent} at ${(weakest.winRate * 100).toFixed(0)}%`);
+  }
+}
+
+/**
+ * Spend a turn on a cheat instead of passing.
+ *
+ * The cheat itself runs in tools/ipvgo-cheat-worker.js rather than here: Bitburner charges
+ * static RAM for every `ns.<fn>` the source mentions, so referencing removeRouter (8 GB)
+ * and the two cheat probes (1 GB each) in this file would bill 10 GB on every run for
+ * everyone — including players without Source-File 14.2, for whom the calls only throw.
+ * Delegating costs this script 1 GB (ns.run) and pays the rest only while cheating.
+ *
+ * @param {NS} ns
+ * @param {{board: string[]}} state
+ * @returns {Promise<boolean>} whether the turn was consumed
+ */
+async function tryCheat(ns, state) {
+  const target = pickCheatTarget(state.board);
+  if (!target) return false;
+
+  ns.clearPort(PORTS.GO_CHEAT);
+  if (ns.run(CHEAT_WORKER, 1, target.x, target.y) === 0) {
+    ns.print("WARN: cheat worker would not start (needs ~11.6 GB free)");
+    return false;
+  }
+
+  const deadline = Date.now() + CHEAT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const report = /** @type {GoCheatReport | null} */ (consumePortData(ns, PORTS.GO_CHEAT));
+    if (report) {
+      ns.print(`${report.status === "played" ? "INFO" : "WARN"}: cheat ${report.status} — ${report.message}`);
+      // Only a SUCCESSFUL cheat earns another pass through the stages — it emptied a node
+      // the fill stage can now claim. A failed cheat must NOT loop back: the fill stage
+      // would find nothing again and come straight back here, firing cheat after cheat in
+      // one turn, each carrying its own ejection risk, until the odds finally decayed
+      // below the threshold. The turn is spent either way, so fall through and pass —
+      // which is exactly what the script did before cheating existed.
+      return report.status === "played";
+    }
+    await ns.sleep(100);
+  }
+  ns.print("WARN: cheat worker did not report back");
+  return false;
+}
+
 /** @param {NS} ns */
 export async function main(ns) {
+  // Opt-in: cheating risks ejection from the subnet and needs Source-File 14.2.
+  //   run /src/tools/ipvgo.js cheat
+  const cheating = ns.args.map(String).includes("cheat");
+  if (cheating) ns.print("INFO: cheating enabled (needs SF-14.2; ~10% ejection risk on a failed retry)");
+
   let gameCounter = 0;
   let opponentIndex = 0;
   game: while (true) {
@@ -52,7 +135,13 @@ export async function main(ns) {
     while (true) {
       if (ns.go.getCurrentPlayer() == "None") {
         const result = ns.go.getGameState();
-        ns.print(`INFO: vs ${ns.go.getOpponent()}: ${result.blackScore} - ${result.whiteScore}`);
+        const opponent = ns.go.getOpponent();
+        const won = result.blackScore > result.whiteScore;
+        ns.print(
+          `${won ? "SUCCESS" : "INFO"}: vs ${opponent}: ${result.blackScore} - ${result.whiteScore}`
+        );
+        // getStats/getMoveHistory are 0 GB, so the running record is free to report.
+        printRecord(ns, opponent);
         opponentIndex++; // rotate only after a finished game
         continue game;
       }
@@ -81,6 +170,15 @@ export async function main(ns) {
                              // opponent on a fresh seed instead of skipping it
         continue game;
       }
+      // Nothing left to play. If cheating is enabled, spend the turn trying to break an
+      // opponent contact point instead of passing: a failed cheat costs a skipped turn,
+      // which is exactly the turn we were about to give up voluntarily. (The residual
+      // cost is the ~10% ejection chance that applies after the first attempt — which is
+      // why the worker re-checks the odds against a higher bar from then on.)
+      if (cheating && (await tryCheat(ns, state))) {
+        continue;
+      }
+
       await ns.go.passTurn();
       state.stage = 5; // Some opponents might do a suicide even after your passing
     }

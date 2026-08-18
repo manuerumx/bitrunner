@@ -12,6 +12,7 @@ export const PORTS = {
   DNET_STASIS: 11,
   DNET_PROBE: 12,
   DNET_CRACK: 13,
+  GO_CHEAT: 14,
 };
 
 // Single source of truth for the daemon's manager roster, shared with tools/manager-toggle.js so
@@ -79,8 +80,14 @@ export const DEFAULTS = {
   moneyThreshold: 0.75,
   reservedHomeRAM: 32,
   purchasedServerRAM: 8,
-  maxPurchasedServerRAM: 1048576,
+  // No maxPurchasedServerRAM here on purpose: server-buyer.js reads the real per-server
+  // ceiling from ns.cloud.getRamLimit() (0.05 GB). Hardcoding 1 PB was wrong if this fork's
+  // cap differs from vanilla or scales with progression.
   hacknetBudgetPercent: 0.1,
+  // Hash-bar fill fraction at which hacknet-manager buys a cache upgrade. Cache adds no
+  // production, so it's only worth money as evidence hashes are being wasted between
+  // spend cycles. Below this the drain loop is keeping up. See pickCacheUpgrade.
+  hacknetCacheFillThreshold: 0.8,
   // Max purchases per cycle of each targeted hash upgrade (Reduce Minimum Security / Increase Maximum
   // Money) the hacknet-manager buys on the richest server. Bounded so one cycle can't dump the whole
   // hash reserve into a single target; whatever's left is drained to money so hashes never cap out.
