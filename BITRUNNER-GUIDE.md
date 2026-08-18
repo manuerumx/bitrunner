@@ -100,7 +100,8 @@ src/
     ├── hwgw-tune.js, xp-farm.js, share-idle.js  ← runtime config toggles
     ├── manager-toggle.js                        ← enable/disable daemon managers
     ├── stasis.js, stasis-worker.js             ← darknet stasis links
-    └── darknet-scan.js, darknet-probe-worker.js ← darknet mapping & cracking intel
+    ├── darknet-scan.js, darknet-probe-worker.js ← darknet mapping & cracking intel
+    └── ipvgo.js                                 ← IPvGO subnet auto-player
 ```
 
 ---
@@ -359,6 +360,18 @@ run src/tools/darknet-scan.js intel        # cracking intel for every uncracked 
 `ns.dnet.probe()` only sees the *current* server's neighbors, so the darknet can only be mapped from within. The scan probes from home, then ships a 1.9 GB probe worker (base 1.6 + probe 0.2 + getServerDetails 0.1) to every known server we can exec on and merges all reports — reports travel back on Port 12 with queue semantics so they can't clobber each other. Each mapped server records its cracking intel: password hint, format and length, required heartbleed charisma, depth, difficulty. Stale map entries are kept — a server that mutated out of view isn't necessarily gone.
 
 Mapped servers flow into `stasis.js` automatically (they show up as `no-password` candidates until cracked). The passwords themselves stay a human job — hints are puzzles by design. The loop is: **scan → read intel → crack → `stasis.js link` → `stasis.js auto` → scan deeper from the newly linked server.**
+
+#### `tools/ipvgo.js` — IPvGO Auto-Player
+```
+run src/tools/ipvgo.js
+```
+Plays IPvGO subnet games back-to-back on a 13×13 board, rotating through the opponent factions in `OPPONENTS` — each win grants permanent stat bonuses (node power), scaling with opponent difficulty. Strategy per game: build a two-eyed base against a board edge (a shaft one row inside the edge, sealing columns at both ends, and a divider splitting the edge row into two eyes), expand outward from the base with scored moves (open-corridor length × lane preference × crowding penalty), then fill every remaining empty node except the protected eye points and pass until the game ends. Each finished game logs the final score before moving to the next faction.
+
+Mechanics worth knowing:
+- Every move goes through a guard that catches illegal-move errors (suicide, ko) and skips the point. The game prints its own red `go.makeMove: … It is illegal …` line before our `WARN: move rejected` — that's normal, mostly from the fill stage probing holes inside opponent territory, and a rejected attempt doesn't consume the turn.
+- The script deliberately avoids `ns.go.analysis.getValidMoves()` — it costs 8 GB of RAM; the try/catch guard is free.
+- A board too rugged to host a base (no viable edge streak) is rerolled after 500 ms against the **same** opponent — board generation is time-seeded — so difficult factions don't get silently skipped.
+- Base spots are chosen flank-aware: an interior streak needs 5 open cells (the two sealing columns each consume one), while a streak against the board edge or dead nodes needs only 4.
 
 ---
 
