@@ -5,6 +5,7 @@ import {
   loadPasswords,
   savePassword,
   planStasisLinks,
+  resolveLinkPassword,
   PASSWORD_FILE,
   STASIS_WORKER_RAM,
 } from "/src/lib/darknet.js";
@@ -157,15 +158,16 @@ export async function main(ns) {
       ns.tprint(`Usage: run ${ns.getScriptName()} ${cmd} <host>${cmd === "link" ? " [password]" : ""}`);
       return;
     }
-    const password = passwordArg ?? store[host];
-    if (!password) {
+    const resolved = resolveLinkPassword(passwordArg, store, host);
+    if (!resolved) {
       ns.tprint(`No password for ${host}. Pass one: run ${ns.getScriptName()} link ${host} <password>`);
+      ns.tprint(`  (ZeroLogon-model servers authenticate on an empty password: ... link ${host} "")`);
       return;
     }
-    const result = await applyLink(ns, host, /** @type {"link"|"unlink"} */ (cmd), password);
+    const result = await applyLink(ns, host, /** @type {"link"|"unlink"} */ (cmd), resolved.password);
     // Session success proves the password — worth keeping even if the exec step failed.
-    if (passwordArg && result !== "no-session" && store[host] !== passwordArg) {
-      savePassword(ns, host, passwordArg);
+    if (resolved.shouldSave && result !== "no-session") {
+      savePassword(ns, host, resolved.password);
       tlog(ns, `password for ${host} saved to ${PASSWORD_FILE}`);
     }
     return;

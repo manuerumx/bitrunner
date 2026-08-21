@@ -243,6 +243,31 @@ export function savePassword(ns, host, password) {
   ns.write(PASSWORD_FILE, JSON.stringify(store, null, 2), "w");
 }
 
+/**
+ * Decide which password a link/unlink should use, and whether it is worth storing.
+ *
+ * Kept pure — and kept here rather than inline in stasis.js — because the empty string is
+ * a *real* password: ZeroLogon-model servers authenticate on "". A truthiness check
+ * (`password || store[host]`) silently collapses that case into "no password known",
+ * which made every ZeroLogon host unstorable. Since pickCrawlHosts() gates on the store,
+ * that one check was enough to pin the whole crawler to home.
+ *
+ * `shouldSave` only reports that the caller's password differs from what is stored; the
+ * caller still gates the write on the session actually succeeding.
+ *
+ * @param {string | null | undefined} passwordArg  Password supplied on the command line.
+ * @param {Record<string, string>} store  Password store (loadPasswords()).
+ * @param {string} host
+ * @returns {{password: string, shouldSave: boolean} | null}  null when no password is known.
+ */
+export function resolveLinkPassword(passwordArg, store, host) {
+  if (typeof passwordArg === "string") {
+    return { password: passwordArg, shouldSave: store[host] !== passwordArg };
+  }
+  if (host in store) return { password: store[host], shouldSave: false };
+  return null;
+}
+
 /** @param {NS} ns */
 export function loadDarknetMap(ns) {
   return parseDarknetMap(ns.read(MAP_FILE));

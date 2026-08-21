@@ -9,6 +9,7 @@ import {
   parsePasswordStore,
   pickCrawlHosts,
   planStasisLinks,
+  resolveLinkPassword,
   PROBE_WORKER_RAM,
   STASIS_WORKER_RAM,
 } from "/src/lib/darknet.js";
@@ -398,4 +399,47 @@ test("mergeHeartbleedLogs leaves hosts absent from this round untouched", () => 
 test("mergeHeartbleedLogs ignores a capture that returned nothing", () => {
   const merged = mergeHeartbleedLogs({}, [{ host: "dn-beta", logs: [] }]);
   assert.deepEqual(merged, {});
+});
+
+// ── resolveLinkPassword ─────────────────────────────────────────────────────
+//
+// stasis.js link/unlink has to answer two questions before it can act: which password to
+// use, and whether that password is worth writing to the store. Both used to be inline
+// truthiness checks in main(), which made the empty string — the password of every
+// ZeroLogon server — indistinguishable from "no password known". A ZeroLogon host was
+// therefore unstorable, and since pickCrawlHosts() gates on the store, that single check
+// kept the whole crawler pinned to home.
+
+test("resolveLinkPassword uses an explicitly passed password", () => {
+  const r = resolveLinkPassword("hunter2", {}, "dn-alpha");
+  assert.deepEqual(r, { password: "hunter2", shouldSave: true });
+});
+
+test("resolveLinkPassword falls back to the stored password", () => {
+  const r = resolveLinkPassword(null, { "dn-alpha": "hunter2" }, "dn-alpha");
+  assert.deepEqual(r, { password: "hunter2", shouldSave: false });
+});
+
+test("resolveLinkPassword returns null when no password is known", () => {
+  assert.equal(resolveLinkPassword(null, {}, "dn-alpha"), null);
+});
+
+test("resolveLinkPassword accepts an empty password as a real ZeroLogon credential", () => {
+  const r = resolveLinkPassword("", {}, "darkweb");
+  assert.deepEqual(r, { password: "", shouldSave: true });
+});
+
+test("resolveLinkPassword reads an empty stored password back out of the store", () => {
+  const r = resolveLinkPassword(null, { darkweb: "" }, "darkweb");
+  assert.deepEqual(r, { password: "", shouldSave: false });
+});
+
+test("resolveLinkPassword does not re-save a password the store already holds", () => {
+  const r = resolveLinkPassword("hunter2", { "dn-alpha": "hunter2" }, "dn-alpha");
+  assert.deepEqual(r, { password: "hunter2", shouldSave: false });
+});
+
+test("resolveLinkPassword prefers the passed password over a different stored one", () => {
+  const r = resolveLinkPassword("new-pw", { "dn-alpha": "old-pw" }, "dn-alpha");
+  assert.deepEqual(r, { password: "new-pw", shouldSave: true });
 });

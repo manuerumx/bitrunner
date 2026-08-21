@@ -5,6 +5,7 @@
 // Add a line here whenever you reference another Netscript type in JSDoc.
 declare global {
   type NS = import("./NetscriptDefinitions").NS;
+  type AutocompleteData = import("./NetscriptDefinitions").AutocompleteData;
   type Server = import("./NetscriptDefinitions").Server;
   type Player = import("./NetscriptDefinitions").Player;
 

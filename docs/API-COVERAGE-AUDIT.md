@@ -241,6 +241,16 @@ once TOR is owned, before hardcoding them into `PROGRAMS`.
 
 ### 5.2 — P0 · Darknet authentication + heartbleed loop
 
+> **Superseded in part — see [`DARKNET.md`](DARKNET.md) for the current state (2026-08-21).**
+> This section describes the codebase *as audited on 2026-08-18*. Since then: **Stage A
+> shipped** (`heartbleed` is called by `darknet-crack-worker.js:25`, so the "never called
+> anywhere in `src/`" claim below now applies to `authenticate` only), and the **open
+> question at the end of this section has partly been answered** — one `modelId → password`
+> rule is known (`ZeroLogon` → `""`), and `formulas.dnet.getAuthenticateTime`'s
+> `correctCharactersInPassword` parameter points at a timing oracle on `2G_cellular`
+> servers. `DARKNET.md` §9 also documents the *actual* reason the pipeline stalls, which
+> this section did not identify: the password store has no automated writer.
+
 **Target:** finish the pipeline this repo already built two-thirds of. `darknet-probe-worker.js`
 harvests exactly the fields a cracker consumes — `passwordHint`, `data`, `passwordLength`,
 `passwordFormat`, `requiredCharisma` (`globals.d.ts:63-79`) — writes them to `MAP_FILE`, and then a
