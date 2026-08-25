@@ -457,6 +457,59 @@ own but doesn't check prerequisites, and `singularity.getAugmentationPrereq` cos
 NeuroFlux Governor is never grafted — its price escalation drags the whole catalogue up with it,
 the same trap `augmentation-buyer.js` defers for.
 
+#### `tools/crime.js` — Crime Income and Karma (SF-4)
+```
+run src/tools/crime.js                  # BitNode read + every crime ranked by $/sec and karma/sec
+run src/tools/crime.js start            # start the loop, ranking on money
+run src/tools/crime.js start karma      # rank on karma/sec instead (gang unlock)
+run src/tools/crime.js start --nofocus  # don't take UI focus
+run src/tools/crime.js stop             # stop the loop, release the player
+```
+Split in two on purpose. The **report** (`tools/crime.js`, ~9 GB, no Singularity calls at all)
+reads this BitNode's `CrimeMoney`, `ScriptHackMoney`, `HacknetNodeMoney` and
+`AugmentationMoneyCost` live via `getBitNodeMultipliers()` and says where crime money should
+actually go — the answer differs sharply by BitNode, and a hardcoded table would be a guess about
+your game. The **loop** (`tools/crime-worker.js`) costs roughly **106 GB at SF-4.1**, 28 GB at SF-4.2,
+8.7 GB at SF-4.3 — hand-summed figures; the report prints the **measured** cost via `getScriptRam`
+against free home RAM, and reads your SF-4 level from `getResetInfo().ownedSF` rather than guessing
+it. It refuses to launch with no SF-4 at all, since the worker would otherwise reserve its full
+allocation, start, and die on its first Singularity call. Splitting the two means the part that
+tells you whether to bother always runs, even when the loop itself won't fit in home RAM.
+
+**Ranking is arithmetic, not a hardcoded "always Homicide."** Crimes are scored on expected yield
+per *second* — `money × successChance ÷ duration`. Heist pays ~2,700× Homicide per attempt and
+still loses early, because it needs 600 s and lands at a success chance near zero; once that chance
+closes, the ranking flips to Heist on its own. Money and success chance come from
+`ns.formulas.work.crimeGains` / `crimeSuccessChance` (**0 GB**, needs `Formulas.exe`). Duration and
+karma come from constant tables in `lib/crime.js`, because a `WorkStats` carries neither, and the
+one API that does — `getCrimeStats` — costs 80 GB at SF-4.1, more than the rest of the worker. The
+tables are checked against the millisecond value `commitCrime()` returns and a mismatch is logged,
+so a rebalance surfaces as a warning rather than as a silently mis-ranked crime.
+
+**Not a `while (true) { commitCrime() }` loop.** A player crime is a `CrimeTask` extending
+`PlayerBaseTask` — it accrues `cyclesWorked` toward a payout, and re-issuing `commitCrime()` resets
+that counter. The loop everyone posts online therefore cancels its own crime on every iteration.
+This one is a **reconciler**: it reads `getCurrentWork()` and only calls `commitCrime` when the
+crime that *should* be running isn't — correct whether player crimes auto-repeat (it never
+interrupts) or resolve once (`getCurrentWork()` reads null and it re-issues). `selectNextCrime`
+adds a 10% switch margin on top, so two near-tied crimes can't trade places every cycle and bank
+nothing. Same trap `needsReassignment()` guards sleeves against in `sleeve-manager.js`.
+
+**Manual on purpose, and it costs you reputation.** Like grafting, this takes over the player.
+`faction-manager.js` now yields for as long as the worker is alive — gated on the worker's
+*presence*, not on `currentWork.type === "CRIME"`, so a crime you started by hand doesn't mute the
+rep grind forever and killing the worker hands the player straight back. Presence is checked with
+`ns.ps`, **not** `ns.isRunning`: a script is keyed by filename *plus arguments*, so
+`isRunning(worker, "home")` matches only a zero-arg launch and `start karma` would have sailed past
+the guard and had its crime cancelled every 30 s. **While the crime loop runs,
+faction reputation stops accumulating entirely.** That is the trade. Killing the worker fires
+`ns.atExit → singularity.stopAction()`, releasing the player.
+
+`start karma` exists because karma is the gate on creating a gang (−54,000), and Homicide wins
+karma/sec by a margin no success chance closes. The worker reports the remaining karma and an ETA.
+Creating the gang is still manual — `gang-manager.js` gates on `ns.gang.inGang()` and takes over
+automatically once you are in one.
+
 #### `tools/stanek.js` — Stanek's Gift (BN-13 / SF-13)
 ```
 run src/tools/stanek.js          # board size and every placed fragment

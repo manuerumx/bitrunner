@@ -64,7 +64,7 @@ No `const { ... } = ns` destructuring exists anywhere in `src/`, so no aliasing 
 | Namespace | Used / Defined | Actionable gaps | Assessment |
 |---|---:|---:|---|
 | `ns` (top-level) | **61 / 107** | 6 | Core hacking fully mapped. Gaps are quality-of-life. |
-| `ns.singularity` | **16 / 64** | 14 | Rep grinding + augs only. No TOR, no programs, no home upgrades, no crime, no company work. |
+| `ns.singularity` | **23 / 64** | 13 | Rep grinding + augs, TOR/programs, home upgrades, crime (`tools/crime.js`). No company work. |
 | `ns.dnet` (fork) | **6 / 22** | 7 | **Half-built pipeline.** Intel harvested, never acted on. See §5.2. |
 | `ns.stock` | **13 / 29** | 8 | Trades well *with 4S*. Cannot buy its own unlocks; idles without 4S. |
 | `ns.corporation` (+Office/Warehouse) | **19 / 63** | 11 | Weakest advanced manager. No boost materials, no MarketTA, no office growth. |
@@ -99,7 +99,7 @@ against them:
 |---|---|
 | Server Purchasing: "auto-buying 8GB servers", upgrades missing | `server-buyer.js:31-49` **already upgrades** — at the server cap it doubles the smallest server repeatedly while cash allows. Uses `ns.cloud.upgradeServer`. Real gap is smaller: the 1 PB cap is hardcoded (`DEFAULTS.maxPurchasedServerRAM`) instead of `ns.cloud.getRamLimit()` — documented as per-server max RAM (`.d.ts:4293`), 0.05 GB. |
 | Stock Market: "portfolio viewer", TIX automation missing | `stock-trader.js` **already trades** — longs, shorts, forecast thresholds, per-cycle budget cap, commission-aware profit gate. Real gaps: it cannot *buy* WSE/TIX/4S access, and its entire trading body sits inside `if (use4S)` (`:97-159`), so **without 4S the manager runs forever and does nothing**. |
-| Singularity: "faction invites check", auto-work missing | `faction-manager.js` **already auto-joins and auto-works**, with rep-need scoring and city-faction exclusivity. `augmentation-buyer.js` handles augs + NeuroFlux + install. Real gaps are elsewhere in Singularity: TOR/programs, home RAM, crime, donations. |
+| Singularity: "faction invites check", auto-work missing | `faction-manager.js` **already auto-joins and auto-works**, with rep-need scoring and city-faction exclusivity. `augmentation-buyer.js` handles augs + NeuroFlux + install. Real gaps are elsewhere in Singularity: TOR/programs, home RAM, crime, donations. *(TOR/programs, home RAM and crime have since been built — §7, §8, §9.)* |
 | Sleeves: "basic shock recovery" | Fair — plus sync, gym, crime, faction work, and aug purchases (`sleeve-manager.js:56-99`). Gaps are sleeve *acquisition* and memory. |
 | Hacknet: "basic node purchasing" | Understated — payback-ratio ranking and hash spending (targeted `Reduce Minimum Security` / `Increase Maximum Money` + drain to money) are implemented. Only cache upgrades are missing. |
 
@@ -671,3 +671,58 @@ Everything from §7 stands, plus: the Bladeburner city score (`population / (1 +
 stated heuristic, not a game formula; the Stanek fragment ranking prefers hacking types on the
 assumption this suite lives on hacking income; and no cheat has ever been played, so the ~10%
 ejection figure is quoted from the API docs rather than observed.
+
+---
+
+## 9. Crime (2026-08-25)
+
+Closes the "no crime" Singularity gap named in §2 and §3. The `ns.singularity` used-count above was
+re-measured with §6's step 2 (`grep -rho "ns\.singularity\.[a-zA-Z]*" --include=*.js src/ | sort -u`)
+and is 23 as of this change — the row had been stale since §7/§8 landed TOR, programs and home RAM.
+
+### Shipped
+- `src/lib/crime.js` — expected-yield ranking (`money × chance ÷ duration`), a switch margin, a
+  reconciler predicate, and a no-Formulas stat ladder. 26 tests in `test/crime.test.js`.
+- `src/tools/crime.js` — report + launcher. ~9 GB, **no Singularity calls**, so it runs even when
+  the loop won't fit.
+- `src/tools/crime-worker.js` — the loop. ~106 GB at SF-4.1 / 28 GB at SF-4.2 / 8.7 GB at SF-4.3
+  (hand-summed; the launcher prints the measured `getScriptRam` value and gates on
+  `getResetInfo().ownedSF` so a no-SF-4 game is refused instead of dying on launch).
+- `src/advanced/faction-manager.js` — yields while the worker is alive.
+
+### Three decisions worth recording
+
+**Constant tables for duration and karma, not `getCrimeStats`.** Ranking needs money, success
+chance, duration and karma. `ns.formulas.work.crimeGains` returns a `WorkStats` — money and exp, no
+`time`, no `karma`. The only API carrying all four is `singularity.getCrimeStats` at 5 GB × 16/4/1
+— 80 GB at SF-4.1, more than the rest of the worker combined. Durations and karma are fixed
+constants, so a table is the same answer for free; the same trade `lib/gang.js` makes with
+`legacyBestTask`. The table is **verified at runtime** against the ms `commitCrime()` returns and a
+mismatch is logged, so it degrades to a warning rather than to a silently wrong ranking.
+
+**A reconciler, not a re-issuing loop.** A player crime is a `CrimeTask extends PlayerBaseTask`, so
+it accrues `cyclesWorked` toward a payout and re-issuing `commitCrime()` resets it. The widely
+circulated `while (true) { commitCrime("Homicide") }` script therefore cancels its own crime every
+iteration. Reading `getCurrentWork()` and committing only on a mismatch is correct under *either*
+crime semantics — auto-repeat or single-attempt — which is why it was written that way rather than
+tuned to whichever one the running build uses. `selectNextCrime`'s 10% switch margin stops two
+near-tied crimes from thrashing the same counter.
+
+**The faction-manager guard is gated on the worker's presence, not on work type — and checked
+with `ns.ps`, not `ns.isRunning`.** Guarding on `currentWork.type === "CRIME"` would let a crime
+started by hand mute the reputation grind permanently, and would leave it muted after the worker
+died. Gating on presence makes the yield self-healing: kill the worker, `ns.atExit` fires
+`stopAction()`, and the rep grind resumes on the next 30 s cycle. The `ns.ps` detail is not
+cosmetic — a script is keyed by filename **plus arguments** (`NetscriptDefinitions.d.ts:8367`), so
+`isRunning(worker, "home")` matches only a zero-argument launch. The first cut used it, which would
+have let `crime.js start karma` slip past the guard and be cancelled every 30 s, and left
+`crime.js stop` killing nothing — a bug visible only in the non-default modes, and only in-game.
+The cost of the guard is stated in the guide rather than hidden: **reputation stops accumulating
+entirely while crime runs.**
+
+### Deliberately not done
+- **Gang creation.** `gang-manager.js` gates on `inGang()` and never calls `createGang`, so
+  reaching −54,000 karma still needs one manual click. `start karma` and the ETA readout exist to
+  make that moment obvious; automating the faction choice is a separate feature.
+- **Not added to the `MANAGERS` roster.** Crime takes over the player, exactly like
+  `tools/grafting.js`. A daemon that silently stops your reputation grind is the wrong default.

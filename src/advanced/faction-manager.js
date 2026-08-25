@@ -3,6 +3,24 @@ import { scanNetwork } from "/src/lib/scanner.js";
 import { PORTS } from "/src/lib/constants.js";
 import { writePortData } from "/src/lib/port-registry.js";
 
+// Yielded to while it runs — see the takeover guard in the work loop below.
+const CRIME_WORKER = "/src/tools/crime-worker.js";
+
+/**
+ * Is the crime loop running, whatever arguments it was launched with?
+ *
+ * ns.isRunning would be the obvious call and is WRONG here: a script is keyed by filename
+ * PLUS arguments (NetscriptDefinitions.d.ts:8367), so isRunning(CRIME_WORKER, "home") only
+ * matches a zero-argument launch. `crime.js start karma` would have slipped straight past
+ * this guard and had its crime cancelled every 30 s — the exact failure the guard exists to
+ * prevent, visible only in the non-default modes. ns.ps matches on filename alone (0.2 GB).
+ *
+ * @param {NS} ns
+ */
+function crimeLoopRunning(ns) {
+  return ns.ps("home").some((proc) => proc.filename === CRIME_WORKER);
+}
+
 const PRIORITY_AUGS = [
   "CashRoot Starter Kit",
   "Neuroreceptor Management Implant",
@@ -112,7 +130,14 @@ export async function main(ns) {
     // reputation — the very constraint this manager exists to grind against — and
     // workForFaction() would cancel it. Grafting appears as its own work type
     // (GraftingTask), so it is distinguishable from ordinary faction work.
-    if (currentWork && currentWork.type === "GRAFTING") {
+    //
+    // Same yield for the crime loop, which is likewise a deliberate takeover of the player.
+    // THE TRADE IS EXPLICIT: while tools/crime-worker.js runs, reputation stops
+    // accumulating entirely. Gated on the worker being alive rather than on
+    // currentWork.type === "CRIME", for two reasons: a crime the player started by hand
+    // should not silently mute the rep grind forever, and killing the worker must hand the
+    // player straight back — which it does, on this manager's next cycle.
+    if ((currentWork && currentWork.type === "GRAFTING") || crimeLoopRunning(ns)) {
       /** @type {FactionStatus} */
       const status = { currentFaction: null, rep: 0, targetRep: 0, availableAugs: 0 };
       writePortData(ns, PORTS.FACTION_STATUS, status);

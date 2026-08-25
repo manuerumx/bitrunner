@@ -72,6 +72,9 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 | `run src/tools/darknet-scan.js crack` | `crack` | Darknet | Heartbleeds every reachable uncracked darknet server and stores the captured logs. **Read-only** — see below. |
 | `run src/tools/grafting.js` | none | SF-10 | Lists augmentations you can graft right now. Grafting needs **money only — no faction reputation.** |
 | `run src/tools/grafting.js graft [name]` | optional name | SF-10 | Travels to New Tokyo and grafts the cheapest affordable augmentation (or the named one). Manual on purpose — see below. |
+| `run src/tools/crime.js` | none | SF-4 | This BitNode's money multipliers + every crime ranked by expected `$/sec` and `karma/sec`. Commits nothing. |
+| `run src/tools/crime.js start [karma]` | optional `karma` | SF-4 | Starts the crime loop, ranking on money (or on karma, for the gang unlock). **Stops faction rep** — see below. |
+| `run src/tools/crime.js stop` | `stop` | SF-4 | Stops the loop and releases the player. |
 | `run src/tools/stanek.js` | none | BN-13/SF-13 | Shows Stanek's Gift board and every placed fragment. |
 | `run src/tools/stanek.js place` | `place` | BN-13/SF-13 | Greedily fills the board, hacking fragments first, boosters last. |
 | `run src/tools/stanek.js charge` | `charge` | BN-13/SF-13 | Charges every placed fragment, evenly, forever. Fragments do nothing until charged. |
@@ -91,6 +94,19 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 > and leaves it alone — but any *other* work loop you run will still fight it. The payoff is
 > real: grafting buys augmentations for cash with **no reputation requirement**, which is the
 > exact constraint the faction manager spends its whole cycle grinding against.
+
+> 🔪 **`crime.js` is manual for the same reason grafting is, and it costs you reputation.**
+> Committing crimes takes over the player, so `faction-manager.js` yields for as long as the loop
+> runs — meaning **faction rep stops accumulating entirely** until you stop it. That's the trade.
+> Run the bare `crime.js` first: it reads this BitNode's `CrimeMoney`, `ScriptHackMoney` and
+> `HacknetNodeMoney` live and tells you whether crime income is worth chasing here and where to
+> spend it, which differs sharply by BitNode. The report is cheap (~9 GB, no Singularity calls);
+> the loop itself is ~106 GB at SF-4.1, so the report still runs when the loop won't fit.
+>
+> The ranking is arithmetic, not a hardcoded "always Homicide": crimes score on
+> `money × chance ÷ duration`. `start karma` exists because karma gates gang creation (−54,000)
+> and Homicide dominates karma/sec — but **creating the gang is still a manual click**;
+> `gang-manager.js` only takes over once you're in one.
 
 > 🕯️ **`stanek.js` cannot accept the gift, deliberately.** Accepting Stanek's Gift is
 > irreversible and permanently shrinks home RAM — the resource the daemon budgets every
@@ -147,6 +163,7 @@ You *can* launch a single manager by hand for testing (e.g. `run src/advanced/st
 |--------|-------|
 | `augmentation-buyer.js`, `reset-prep.js`, `backdoor.js` | **SF-4** (Singularity) |
 | `grafting.js` | **SF-10** — same Source-File as sleeves, so if sleeves run, grafting is available |
+| `crime.js` | **SF-4** — the launcher reads your SF-4 level and refuses to start the loop without it |
 | `stanek.js` | BitNode 13 / SF-13, and the gift must already be accepted |
 | `ipvgo.js cheat` | **SF-14.2** (plain `ipvgo.js` needs nothing) |
 | `program-buyer.js` (auto), `home-upgrader.js` (auto) | **SF-4** — and note the ×16/×4/×1 RAM multiplier by SF-4 level |
