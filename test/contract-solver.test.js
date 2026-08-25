@@ -183,3 +183,82 @@ test("Square Root", () => {
     "10901697849157328158981951240161710083844436327427228157030717228421332334757527960415837777955862845"
   );
 });
+
+// Signature (NetscriptDefinitions.d.ts:9602):
+//   "Largest Rectangle in a Matrix": [(1 | 0)[][], [[number, number], [number, number]]]
+// Input is a 0/1 grid, answer is [[topRow, leftCol], [bottomRow, rightCol]] inclusive.
+// 1 is the obstacle and 0 is fillable, matching how "Unique Paths in a Grid II" and
+// "Shortest Path in a Grid" read the same encoding in this same file.
+test("Largest Rectangle in a Matrix", () => {
+  // Whole grid is free.
+  assert.deepEqual(solve("Largest Rectangle in a Matrix", [[0, 0, 0, 0], [0, 0, 0, 0], [0, 0, 0, 0]]), [
+    [0, 0],
+    [2, 3],
+  ]);
+  // A 2x2 block of zeros in the corner, walled off by ones.
+  assert.deepEqual(solve("Largest Rectangle in a Matrix", [[0, 0, 1], [0, 0, 1], [1, 1, 1]]), [
+    [0, 0],
+    [1, 1],
+  ]);
+  // Single row: the widest run of zeros wins, not the first one.
+  assert.deepEqual(solve("Largest Rectangle in a Matrix", [[0, 1, 0, 0, 0]]), [[0, 2], [0, 4]]);
+  assert.deepEqual(solve("Largest Rectangle in a Matrix", [[0]]), [[0, 0], [0, 0]]);
+});
+
+// A tall-thin rectangle can beat a short-wide one, which is the case a "widest run per row"
+// shortcut gets wrong — the answer has to consider every (top, bottom) row pair.
+test("Largest Rectangle in a Matrix prefers area over width", () => {
+  const grid = [
+    [0, 0, 0, 1],
+    [1, 0, 0, 1],
+    [1, 0, 0, 1],
+  ];
+  // The 3-wide top row is area 3; the 2x3 column block is area 6.
+  assert.deepEqual(solve("Largest Rectangle in a Matrix", grid), [[0, 1], [2, 2]]);
+});
+
+// Property test against brute force. Every rectangle the solver returns must be in bounds,
+// contain no 1, and have exactly the maximum achievable area — which pins down the answer
+// far more tightly than the hand-picked grids above.
+test("Largest Rectangle in a Matrix matches brute force on random grids", () => {
+  const bruteMaxArea = (m) => {
+    let best = 0;
+    for (let r1 = 0; r1 < m.length; r1++)
+      for (let r2 = r1; r2 < m.length; r2++)
+        for (let c1 = 0; c1 < m[0].length; c1++)
+          for (let c2 = c1; c2 < m[0].length; c2++) {
+            let ok = true;
+            for (let r = r1; r <= r2 && ok; r++)
+              for (let c = c1; c <= c2 && ok; c++) if (m[r][c] !== 0) ok = false;
+            if (ok) best = Math.max(best, (r2 - r1 + 1) * (c2 - c1 + 1));
+          }
+    return best;
+  };
+
+  // Deterministic LCG so a failure is reproducible rather than a flake.
+  let seed = 12345;
+  const rnd = () => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff) / 0x7fffffff);
+
+  for (let trial = 0; trial < 500; trial++) {
+    const rows = 1 + Math.floor(rnd() * 5);
+    const cols = 1 + Math.floor(rnd() * 5);
+    const density = rnd();
+    const grid = Array.from({ length: rows }, () =>
+      Array.from({ length: cols }, () => (rnd() < density ? 1 : 0))
+    );
+    const want = bruteMaxArea(grid);
+    const got = solve("Largest Rectangle in a Matrix", grid);
+    const label = JSON.stringify(grid);
+
+    if (want === 0) continue; // no zero-rectangle exists; see the note in the solver
+    const [[r1, c1], [r2, c2]] = got;
+    assert.ok(r1 >= 0 && c1 >= 0 && r2 < rows && c2 < cols, `out of bounds ${label}`);
+    assert.ok(r1 <= r2 && c1 <= c2, `inverted corners ${label}`);
+    for (let r = r1; r <= r2; r++) {
+      for (let c = c1; c <= c2; c++) {
+        assert.equal(grid[r][c], 0, `rectangle covers an obstacle at [${r},${c}] in ${label}`);
+      }
+    }
+    assert.equal((r2 - r1 + 1) * (c2 - c1 + 1), want, `not maximal for ${label}`);
+  }
+});

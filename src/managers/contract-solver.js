@@ -16,6 +16,52 @@ export const SOLVERS = {
     return n > 1 ? n : largest;
   },
 
+  "Largest Rectangle in a Matrix": (data) => {
+    const rows = data.length;
+    if (rows === 0) return [];
+    const cols = data[0].length;
+
+    let maxArea = 0;
+    let resultCorners = [];
+
+    for (let r1 = 0; r1 < rows; r1++) {
+      // Array to track column heights/widths of consecutive 0s
+      const widths = new Array(cols).fill(0);
+
+      for (let r2 = r1; r2 < rows; r2++) {
+        for (let c = 0; c < cols; c++) {
+          // If we hit a 1, break the current consecutive zero block
+          if (data[r2][c] === 1) {
+            widths[c] = -1;
+          } else if (widths[c] !== -1) {
+            widths[c] = (widths[c] || 0) + 1;
+          }
+        }
+
+        // Find the max horizontal contiguous sub-segment of valid 0s for height (r2 - r1 + 1)
+        let currentWidth = 0;
+        let startCol = 0;
+
+        for (let c = 0; c < cols; c++) {
+          if (widths[c] === r2 - r1 + 1) {
+            if (currentWidth === 0) startCol = c;
+            currentWidth++;
+
+            const area = (r2 - r1 + 1) * currentWidth;
+            if (area > maxArea) {
+              maxArea = area;
+              resultCorners = [[r1, startCol], [r2, c]];
+            }
+          } else {
+            currentWidth = 0;
+          }
+        }
+      }
+    }
+
+    return resultCorners;
+  },
+
   "Subarray with Maximum Sum": (data) => {
     let maxSum = data[0];
     let current = data[0];
