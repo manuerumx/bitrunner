@@ -6,6 +6,7 @@ import {
   isServerPrepped,
   maxBatches,
   hwgwBatchDepth,
+  fitBatchToRAM,
 } from "/src/lib/batch-calculator.js";
 
 // Minimal deterministic stand-in for the parts of `ns` these functions touch.
@@ -106,4 +107,71 @@ test("calculatePrepThreads weakens an un-prepped server toward min", () => {
   const p = calculatePrepThreads(ns, { hostname: "x" });
   assert.equal(p.weakenThreads, 100); // 5 / 0.05
   assert.equal(p.growThreads, 0);
+});
+
+// --- fitBatchToRAM ---
+//
+// The mock above is deliberately insensitive to hackPercent (fixed thread counts), which
+// would make a "shrinks until it fits" assertion pass for the wrong reason. This one scales
+// the way the game does: grow threads with ln(1 / (1 - p)), hack threads linearly with p.
+function makeScalingNs(overrides = {}) {
+  return makeNs({
+    getServerMaxMoney: () => 1e9,
+    getServerMoneyAvailable: () => 1e9,
+    // 1 grow thread multiplies money by e^1e-4, so threads = ln(mult) / 1e-4.
+    growthAnalyze: (_h, mult) => Math.log(mult) / 1e-4,
+    growthAnalyzeSecurity: (threads) => 0.004 * threads,
+    // 1 hack thread steals $1e7 from a $1e9 server (1%).
+    hackAnalyzeThreads: (_h, amount) => amount / 1e7,
+    hackAnalyzeSecurity: (threads) => 0.002 * threads,
+    ...overrides,
+  });
+}
+
+test("batch RAM rises monotonically with hackPercent (fitBatchToRAM's precondition)", () => {
+  const ns = makeScalingNs();
+  let prev = 0;
+  for (const p of [0.01, 0.05, 0.1, 0.25, 0.5, 0.7, 0.9]) {
+    const ram = calculateBatch(ns, "x", p).totalRAM;
+    assert.ok(ram > prev, `RAM at ${p} (${ram}) should exceed RAM at the previous step (${prev})`);
+    prev = ram;
+  }
+});
+
+test("fitBatchToRAM keeps the full hackPercent when RAM is plentiful", () => {
+  const ns = makeScalingNs();
+  const full = calculateBatch(ns, "x", 0.7);
+  const fit = fitBatchToRAM(ns, "x", full.totalRAM * 4, 0.7, 0.01);
+  assert.equal(fit.hackPercent, 0.7);
+  assert.equal(fit.batch.totalRAM, full.totalRAM);
+});
+
+test("fitBatchToRAM shrinks hackPercent so the batch fits the pool", () => {
+  const ns = makeScalingNs();
+  // A 70% batch needs ~22 TB here; the pool has 5 TB — the real the-hub deadlock.
+  const pool = 5000;
+  assert.ok(calculateBatch(ns, "x", 0.7).totalRAM > pool);
+
+  const fit = fitBatchToRAM(ns, "x", pool, 0.7, 0.01);
+  assert.notEqual(fit, null);
+  assert.ok(fit.hackPercent < 0.7);
+  assert.ok(fit.batch.totalRAM <= pool, `batch (${fit.batch.totalRAM}) must fit in ${pool}`);
+  // It must not shrink further than necessary: the fitted batch uses most of the pool,
+  // and one notch up would overflow it.
+  assert.ok(fit.batch.totalRAM > pool * 0.9);
+  assert.ok(calculateBatch(ns, "x", fit.hackPercent * 1.2).totalRAM > pool);
+});
+
+test("fitBatchToRAM returns null when even the minimum steal cannot fit", () => {
+  const ns = makeScalingNs();
+  const floor = calculateBatch(ns, "x", 0.01).totalRAM;
+  assert.equal(fitBatchToRAM(ns, "x", floor - 1, 0.7, 0.01), null);
+  assert.equal(fitBatchToRAM(ns, "x", 0, 0.7, 0.01), null);
+  assert.equal(fitBatchToRAM(ns, "x", -5, 0.7, 0.01), null);
+});
+
+test("fitBatchToRAM never returns a batch above the requested ceiling", () => {
+  const ns = makeScalingNs();
+  const fit = fitBatchToRAM(ns, "x", 1e9, 0.25, 0.01);
+  assert.equal(fit.hackPercent, 0.25);
 });

@@ -4,7 +4,7 @@ import { WORKER_RAM, DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { deployWorkers } from "/src/lib/deployer.js";
 import { readPortData } from "/src/lib/port-registry.js";
 import { getConfig } from "/src/lib/config.js";
-import { calculateBatch, isServerPrepped, hwgwBatchDepth } from "/src/lib/batch-calculator.js";
+import { calculateBatch, isServerPrepped, hwgwBatchDepth, fitBatchToRAM } from "/src/lib/batch-calculator.js";
 import { log, formatMoney, formatTime, formatRAM } from "/src/lib/utils.js";
 
 function getAvailableRAM(ns, hostname) {
@@ -52,6 +52,19 @@ function getAllWorkerServers(ns) {
 
 function poolFreeRAM(workerServers) {
   return workerServers.reduce((sum, s) => sum + s.freeRAM, 0);
+}
+
+// Total RAM the botnet could EVER give us, ignoring what's busy right now. Used only to tell a
+// transient shortage ("everything is running prep, wait for it") apart from a permanent one
+// ("this target's smallest batch is bigger than the whole botnet"). Those need opposite
+// responses, and conflating them is what let one target stall the whole coordinator.
+function poolCapacityRAM(ns) {
+  let total = Math.max(0, ns.getServerMaxRam("home") - DEFAULTS.reservedHomeRAM);
+  for (const hostname of scanNetwork(ns)) {
+    if (!ns.hasRootAccess(hostname)) continue;
+    total += ns.getServerMaxRam(hostname);
+  }
+  return total;
 }
 
 function execWorker(ns, script, host, threads, target, delay = 0) {
@@ -143,24 +156,38 @@ function prepTarget(ns, hostname, workerServers) {
 
 // --- HWGW BATCH (precision-timed hack cycle) ---
 
-function runHWGWBatch(ns, target, workerServers, batchId) {
-  const hostname = target.hostname;
-  const batch = calculateBatch(ns, hostname, DEFAULTS.hackPercent);
+// Dispatch one batch of a PRE-SIZED shape. The steal fraction is chosen once per target by
+// fitBatchToRAM (see Phase 1) rather than re-derived here, so every batch in a target's pipeline is
+// identical and depthCap is computed for the batch we actually send.
+//
+// Leg order is grow/weaken FIRST, hack LAST, deliberately. Each worker carries its own delay, so
+// exec order has no effect on landing order — which makes the order free to spend on failure
+// handling. If the pool runs dry mid-batch, the leg we want to lose is the hack: a hack that lands
+// without its matching grow drains the target below max money and de-preps it, and on a low-growth
+// server re-prepping costs far more than the steal was worth. Coming up short on grow/weaken just
+// over-restores a server that's already full, which is harmless.
+function runHWGWBatch(ns, hostname, workerServers, batchId, batch, spacing) {
+  if (poolFreeRAM(workerServers) < batch.totalRAM) {
+    return { dispatched: false, starved: false, threads: 0 };
+  }
 
-  if (poolFreeRAM(workerServers) < batch.totalRAM) return { dispatched: false, batch };
+  const offset = batchId * spacing * 4;
 
-  const offset = batchId * DEFAULTS.batchSpacingMs * 4;
-
-  const h = allocateThreads(ns, workerServers, "/src/hack.js", batch.hackThreads, hostname, batch.timings.hackDelay + offset);
   const w1 = allocateThreads(ns, workerServers, "/src/weaken.js", batch.weakenAfterHackThreads, hostname, batch.timings.weaken1Delay + offset);
   const g = allocateThreads(ns, workerServers, "/src/grow.js", batch.growThreads, hostname, batch.timings.growDelay + offset);
   const w2 = allocateThreads(ns, workerServers, "/src/weaken.js", batch.weakenAfterGrowThreads, hostname, batch.timings.weaken2Delay + offset);
+  const h = allocateThreads(ns, workerServers, "/src/hack.js", batch.hackThreads, hostname, batch.timings.hackDelay + offset);
 
-  return {
-    dispatched: h > 0 || w1 > 0 || g > 0 || w2 > 0,
-    threads: h + w1 + g + w2,
-    batch,
-  };
+  // A batch only counts as dispatched when EVERY leg got its full thread count. Partial batches
+  // used to count (the old check was an OR over the four legs), which quietly let a hack land
+  // without its grow.
+  const complete =
+    h === batch.hackThreads &&
+    w1 === batch.weakenAfterHackThreads &&
+    g === batch.growThreads &&
+    w2 === batch.weakenAfterGrowThreads;
+
+  return { dispatched: complete, starved: !complete, threads: h + w1 + g + w2 };
 }
 
 // --- MAIN LOOP ---
@@ -219,31 +246,69 @@ export async function main(ns) {
 
     // ──────────────────────────────────────────────
     // Phase 1: HWGW batches on ALL prepped targets
+    //
+    //   cfg.hackPercent is a CEILING, not a fixed
+    //   steal. fitBatchToRAM picks the largest steal
+    //   whose batch actually fits the pool — without
+    //   that, a high-money low-growth target (whose
+    //   70% batch needs more RAM than the botnet
+    //   owns) dispatches nothing at all, forever.
     // ──────────────────────────────────────────────
+    const blocked = [];    // prepped, starved right now — the pool is busy, waiting helps
+    const infeasible = []; // prepped, but no batch fits the botnet at all — waiting NEVER helps
+    let capacityRAM = -1;  // lazily computed; only the failure path needs it
+
     for (const target of preppedTargets) {
-      let batchCount = 0;
-      let lastBatch = null;
+      const freeNow = poolFreeRAM(workerServers);
+
+      // Size to a share of the pool rather than all of it, so one target leaves room for a short
+      // pipeline and for the other prepped targets. RAM per dollar stolen is ln(1/(1-p))/p, which
+      // is lowest at small p, so several small batches out-earn one maximal batch on the same RAM.
+      // Fall back to the whole free pool when that share is too small for even the minimum steal.
+      const share = freeNow / Math.max(1, cfg.hwgwFitBatches);
+      let fit = fitBatchToRAM(ns, target.hostname, share, cfg.hackPercent, cfg.hwgwMinHackPercent, cfg.batchSpacingMs);
+      if (!fit) {
+        fit = fitBatchToRAM(ns, target.hostname, freeNow, cfg.hackPercent, cfg.hwgwMinHackPercent, cfg.batchSpacingMs);
+      }
+
+      if (!fit) {
+        // Nothing fits in the free pool. WHY matters: a busy botnet will free up and prep would
+        // only make it worse, but a botnet that's simply too small for this target never frees up
+        // — treating the second case like the first is what left the coordinator idling on a full
+        // pool with "HWGW READY ... waiting for 5.0 TB".
+        if (capacityRAM < 0) capacityRAM = poolCapacityRAM(ns);
+        const smallest = calculateBatch(ns, target.hostname, cfg.hwgwMinHackPercent, cfg.batchSpacingMs);
+        const entry = { hostname: target.hostname, needRAM: smallest.totalRAM, freeRAM: freeNow };
+        if (smallest.totalRAM <= capacityRAM) blocked.push(entry);
+        else infeasible.push(entry);
+        continue;
+      }
 
       // Self-size the pipeline to this target's batch timing instead of a flat 100. Slow high-tier
       // targets get a deeper pipeline (the long weakenTime needs more batches to stay full); fast
       // targets get a shallower one (and a shorter, more responsive cycle). RAM is still the hard
       // limiter below — depthCap only bounds how far we *try* to go this cycle.
-      const probe = calculateBatch(ns, target.hostname, cfg.hackPercent);
-      const depthCap = hwgwBatchDepth(probe.batchDuration, cfg.hwgwBatchWaves, cfg.hwgwMaxBatches, cfg.batchSpacingMs);
+      const depthCap = hwgwBatchDepth(fit.batch.batchDuration, cfg.hwgwBatchWaves, cfg.hwgwMaxBatches, cfg.batchSpacingMs);
 
+      let batchCount = 0;
+      let starved = false;
       for (let i = 0; i < depthCap; i++) {
-        const result = runHWGWBatch(ns, target, workerServers, i);
+        const result = runHWGWBatch(ns, target.hostname, workerServers, i, fit.batch, cfg.batchSpacingMs);
+        totalThreads += result.threads;
+        if (result.starved) starved = true;
         if (!result.dispatched) break;
         batchCount++;
-        lastBatch = result.batch;
-        totalThreads += result.threads;
-        if (poolFreeRAM(workerServers) < result.batch.totalRAM) break;
+      }
+
+      if (starved) {
+        log(ns, `partial HWGW batch on ${target.hostname} — pool ran dry mid-batch (hack leg dropped first)`);
       }
 
       if (batchCount > 0) {
-        summary.push(`${target.hostname}(${batchCount}×HWGW)`);
-        const lastOffset = (batchCount - 1) * DEFAULTS.batchSpacingMs * 4;
-        hwgwCompletionTime = Math.max(hwgwCompletionTime, lastOffset + lastBatch.batchDuration);
+        const pct = (fit.hackPercent * 100).toFixed(fit.hackPercent < 0.1 ? 1 : 0);
+        summary.push(`${target.hostname}(${batchCount}×HWGW@${pct}%)`);
+        const lastOffset = (batchCount - 1) * cfg.batchSpacingMs * 4;
+        hwgwCompletionTime = Math.max(hwgwCompletionTime, lastOffset + fit.batch.batchDuration);
       }
     }
 
@@ -256,7 +321,10 @@ export async function main(ns) {
     //   DON'T dispatch more prep — it makes it worse.
     //   Wait for running scripts to finish instead.
     // ──────────────────────────────────────────────
-    const hwgwBlocked = preppedTargets.length > 0 && hwgwCompletionTime === 0;
+    // Only a TRANSIENT shortage suppresses prep — a prepped target will get its RAM back when the
+    // running scripts land, and piling on more prep would delay that. An infeasible target must not
+    // suppress anything: its batch will never fit, so blocking prep on it stalls the suite outright.
+    const hwgwBlocked = blocked.length > 0;
 
     if (!hwgwBlocked && unprepTargets.length > 0) {
       const ramBeforePrep = poolFreeRAM(workerServers);
@@ -395,14 +463,19 @@ export async function main(ns) {
     // ──────────────────────────────────────────────
     // Logging
     // ──────────────────────────────────────────────
-    if (totalThreads > 0 || hwgwBlocked || shareThreads > 0 || xpThreads > 0) {
+    if (totalThreads > 0 || shareThreads > 0 || xpThreads > 0) {
       const usedRAM = totalFreeRAM - poolFreeRAM(workerServers);
       const pct = totalFreeRAM > 0 ? ((usedRAM / totalFreeRAM) * 100).toFixed(0) : "0";
-      if (hwgwBlocked && totalThreads === 0) {
-        log(ns, `HWGW READY: ${preppedTargets.map(t => t.hostname).join(", ")} — waiting for ${formatRAM(totalFreeRAM)} to free up`);
-      } else {
-        log(ns, `${totalThreads}t -> ${summary.join(", ")} | ${formatRAM(usedRAM)}/${formatRAM(totalFreeRAM)} (${pct}%)`);
-      }
+      log(ns, `${totalThreads}t -> ${summary.join(", ")} | ${formatRAM(usedRAM)}/${formatRAM(totalFreeRAM)} (${pct}%)`);
+    }
+    // Report what a batch NEEDS against what's there. The old line printed the free pool as if it
+    // were the requirement ("waiting for 5.0 TB to free up" while 5.0 TB sat free), which made a
+    // permanent stall look like ordinary contention.
+    for (const b of blocked) {
+      log(ns, `HWGW WAITING: ${b.hostname} — smallest batch needs ${formatRAM(b.needRAM)}, only ${formatRAM(b.freeRAM)} free; waiting on running scripts`);
+    }
+    for (const b of infeasible) {
+      log(ns, `HWGW INFEASIBLE: ${b.hostname} — smallest batch needs ${formatRAM(b.needRAM)} but the whole botnet is ${formatRAM(capacityRAM)}; prepping/hacking instead (buy RAM, or lower hwgwMinHackPercent)`);
     }
 
     // ──────────────────────────────────────────────

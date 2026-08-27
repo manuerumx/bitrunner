@@ -129,6 +129,18 @@ export const DEFAULTS = {
   // Tune live via tools/config overrides (PORTS.CONFIG_OVERRIDES); RAM is still the hard limiter.
   hwgwBatchWaves: 4,
   hwgwMaxBatches: 500,
+  // Floor for the adaptive steal fraction (see batch-calculator.fitBatchToRAM). hackPercent is a
+  // CEILING, not a fixed value: the grow leg of a batch costs ln(1 / (1 - p)) threads, so on a
+  // high-money low-growth server one 70% batch can need more RAM than the whole botnet owns — and
+  // the coordinator then dispatches nothing at all for that target. The coordinator shrinks p until
+  // the batch fits; below this floor it declares HWGW infeasible and falls through to prep/hack
+  // income instead of idling. Keep it small — RAM per dollar stolen is best at low p.
+  hwgwMinHackPercent: 0.01,
+  // How many batches the adaptive sizer aims to fit in the free pool per target per cycle. The
+  // batch is sized to poolFree / this, so a target leaves room for a short pipeline and for the
+  // other prepped targets instead of one maximal batch swallowing the botnet. If even one batch at
+  // the minimum steal won't fit in that share, the sizer falls back to the whole free pool.
+  hwgwFitBatches: 4,
   managerCycleMs: 5000,
   rooterCycleMs: 30000,
   serverBuyerCycleMs: 60000,

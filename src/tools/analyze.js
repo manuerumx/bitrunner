@@ -1,6 +1,20 @@
-import { getServerDetails } from "/src/lib/scanner.js";
-import { calculateBatch, calculatePrepThreads, isServerPrepped } from "/src/lib/batch-calculator.js";
+import { getServerDetails, scanNetwork } from "/src/lib/scanner.js";
+import { calculateBatch, calculatePrepThreads, isServerPrepped, fitBatchToRAM } from "/src/lib/batch-calculator.js";
+import { getConfig } from "/src/lib/config.js";
+import { DEFAULTS } from "/src/lib/constants.js";
 import { formatMoney, formatRAM, formatTime, formatPercent } from "/src/lib/utils.js";
+
+// Free RAM the hack-coordinator would see right now — same accounting it uses (rooted servers plus
+// home minus reservedHomeRAM), so the "what will actually run" section below matches its log lines.
+/** @param {NS} ns */
+function coordinatorPoolRAM(ns) {
+  let total = Math.max(0, ns.getServerMaxRam("home") - ns.getServerUsedRam("home") - DEFAULTS.reservedHomeRAM);
+  for (const hostname of scanNetwork(ns)) {
+    if (!ns.hasRootAccess(hostname)) continue;
+    total += Math.max(0, ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname));
+  }
+  return total;
+}
 
 /** @param {NS} ns */
 export async function main(ns) {
@@ -50,8 +64,36 @@ export async function main(ns) {
     ns.tprint(`Total Prep RAM: ${formatRAM(prep.totalRAM)}`);
   }
 
+  // What the coordinator will ACTUALLY dispatch. hackPercent is a ceiling: it shrinks the steal
+  // until the batch fits poolFree / hwgwFitBatches (see lib/batch-calculator.fitBatchToRAM), so the
+  // fixed-percent table below can show a batch that is far too big to ever run. Print the fitted
+  // one first, or this tool contradicts the coordinator's own log.
+  const cfg = getConfig(ns);
+  const poolRAM = coordinatorPoolRAM(ns);
+  const share = poolRAM / Math.max(1, cfg.hwgwFitBatches);
+  const fit =
+    fitBatchToRAM(ns, target, share, cfg.hackPercent, cfg.hwgwMinHackPercent, cfg.batchSpacingMs) ||
+    fitBatchToRAM(ns, target, poolRAM, cfg.hackPercent, cfg.hwgwMinHackPercent, cfg.batchSpacingMs);
+
+  ns.tprint("");
+  ns.tprint(`--- What the coordinator will dispatch (pool: ${formatRAM(poolRAM)} free) ---`);
+  if (!fit) {
+    const smallest = calculateBatch(ns, target, cfg.hwgwMinHackPercent, cfg.batchSpacingMs);
+    ns.tprint(`NO HWGW: even a ${formatPercent(cfg.hwgwMinHackPercent)} batch needs ${formatRAM(smallest.totalRAM)}.`);
+    ns.tprint(`Buy RAM, or lower the floor: run src/tools/hwgw-tune.js min <fraction>`);
+  } else {
+    const fitted = Math.floor(poolRAM / fit.batch.totalRAM);
+    const moneyPerBatch = srv.maxMoney * fit.hackPercent * ns.hackAnalyzeChance(target);
+    ns.tprint(`Fitted steal: ${formatPercent(fit.hackPercent)} (ceiling ${formatPercent(cfg.hackPercent)})`);
+    ns.tprint(`H: ${fit.batch.hackThreads} | W1: ${fit.batch.weakenAfterHackThreads} | G: ${fit.batch.growThreads} | W2: ${fit.batch.weakenAfterGrowThreads}`);
+    ns.tprint(`Per batch: ${formatRAM(fit.batch.totalRAM)}, ${formatMoney(moneyPerBatch)} — ~${fitted} fit in the pool`);
+    ns.tprint(`$/sec at that depth: ${formatMoney((fitted * moneyPerBatch) / (fit.batch.batchDuration / 1000))}`);
+  }
+
+  ns.tprint("");
+  ns.tprint(`--- Fixed-percent reference (ignores available RAM) ---`);
   for (const hackPct of [0.25, 0.5, 0.75]) {
-    const batch = calculateBatch(ns, target, hackPct);
+    const batch = calculateBatch(ns, target, hackPct, cfg.batchSpacingMs);
     const moneyPerBatch = srv.maxMoney * hackPct * ns.hackAnalyzeChance(target);
     const batchesPerSec = 1000 / batch.batchDuration;
 

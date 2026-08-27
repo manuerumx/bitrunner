@@ -34,7 +34,7 @@ export function calculatePrepThreads(ns, target) {
 }
 
 /** @param {NS} ns */
-export function calculateBatch(ns, hostname, hackPercent = DEFAULTS.hackPercent) {
+export function calculateBatch(ns, hostname, hackPercent = DEFAULTS.hackPercent, spacing = DEFAULTS.batchSpacingMs) {
   const maxMoney = ns.getServerMaxMoney(hostname);
   const hackThreads = Math.max(1, Math.floor(ns.hackAnalyzeThreads(hostname, maxMoney * hackPercent)));
 
@@ -51,7 +51,6 @@ export function calculateBatch(ns, hostname, hackPercent = DEFAULTS.hackPercent)
   const hackTime = ns.getHackTime(hostname);
   const growTime = ns.getGrowTime(hostname);
   const weakenTime = ns.getWeakenTime(hostname);
-  const spacing = DEFAULTS.batchSpacingMs;
 
   // HWGW landing order must be hack → weaken1 → grow → weaken2, each separated
   // by `spacing`. Landing time = delay + opTime, so we solve for each delay:
@@ -124,4 +123,59 @@ export function hwgwBatchDepth(
   const stride = spacing * 4;
   const pipelineDepth = Math.max(1, Math.ceil(batchDuration / stride));
   return Math.min(maxBatchesPerTarget, pipelineDepth * Math.max(1, waves));
+}
+
+// Size an HWGW batch to the RAM you actually have.
+//
+// calculateBatch's grow leg costs ln(1 / (1 - hackPercent)) threads — superlinear in the steal
+// fraction — so on a high-money, LOW-GROWTH server a single 70% batch can need more RAM than the
+// entire botnet owns. runHWGWBatch refuses to dispatch a batch it can't fund in full, so that
+// target then dispatches NOTHING, forever: it is already prepped (so prep skips it) and it sits in
+// the top-N target list (so the hack-income phase skips it too). The coordinator idles with a full
+// pool. That is the "HWGW READY ... waiting for N TB to free up" stall.
+//
+// The fix is to stop treating hackPercent as a constant. RAM per unit of money stolen is
+// ln(1 / (1 - p)) / p, which is *lowest* at small p — so a smaller steal is not just the fallback,
+// it's the more RAM-efficient trade. Binary-search the largest p in [minPct, maxPct] whose batch
+// fits in availableRAM. Monotonicity of totalRAM in p (asserted in the tests) is what makes the
+// search valid.
+//
+// Returns { batch, hackPercent }, or null when even minPct doesn't fit — the caller needs that
+// distinction: "too poor for even the smallest batch" means fall through to prep/hack-income,
+// not sit and wait.
+/** @param {NS} ns */
+export function fitBatchToRAM(
+  ns,
+  hostname,
+  availableRAM,
+  maxPct = DEFAULTS.hackPercent,
+  minPct = DEFAULTS.hwgwMinHackPercent,
+  spacing = DEFAULTS.batchSpacingMs
+) {
+  if (!(availableRAM > 0)) return null;
+
+  const hi0 = Math.min(0.99, Math.max(0.001, maxPct));
+  const lo0 = Math.min(hi0, Math.max(0.001, minPct));
+
+  const full = calculateBatch(ns, hostname, hi0, spacing);
+  if (full.totalRAM <= availableRAM) return { batch: full, hackPercent: hi0 };
+
+  const floor = calculateBatch(ns, hostname, lo0, spacing);
+  if (floor.totalRAM > availableRAM) return null;
+
+  // 14 halvings resolve the percent to ~0.004% — far finer than thread rounding.
+  let lo = lo0;
+  let hi = hi0;
+  let best = { batch: floor, hackPercent: lo0 };
+  for (let i = 0; i < 14; i++) {
+    const mid = (lo + hi) / 2;
+    const batch = calculateBatch(ns, hostname, mid, spacing);
+    if (batch.totalRAM <= availableRAM) {
+      best = { batch, hackPercent: mid };
+      lo = mid;
+    } else {
+      hi = mid;
+    }
+  }
+  return best;
 }
