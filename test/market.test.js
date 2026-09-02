@@ -1,28 +1,127 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { momentumSignal, planMarketUnlocks, pushSample, shouldRealize } from "/src/lib/market.js";
+import {
+  fitSharesToBudget,
+  momentumSignal,
+  planMarketUnlocks,
+  pushSample,
+  rankByConviction,
+  stockBudget,
+  worthTrading,
+} from "/src/lib/market.js";
 
-// ── shouldRealize ───────────────────────────────────────────────────────────
+// ── worthTrading ────────────────────────────────────────────────────────────
 //
-// Selling costs commission a second time, so dumping a position that is barely underwater
-// guarantees the loss. The 4S path has always gated on this; the momentum path did not,
-// which meant the fallback trader had a strictly worse loss policy than the primary one —
-// three lines apart in the same file.
+// This used to be shouldRealize(profit, minProfit), which held any position underwater by
+// more than two commissions. That is backwards at scale: the 4S sell also requires
+// forecast < 0.5, so the rule refused to exit exactly the stocks the game had just said
+// would keep falling, and the `longShares === 0` buy gate then blocked topping the symbol
+// back up. A live portfolio sat at 0.6% of market capacity with 15 of 15 positions locked.
+//
+// A bearish forecast is authoritative — it is the per-tick probability of an uptick, so
+// holding below 0.5 is negative expected value. Direction is decided by the caller; all
+// this rule does now is refuse to churn a position so small the fee is the whole trade.
+// The argument is getSaleGain(), the net proceeds, not the profit.
 
-test("shouldRealize sells a profitable position", () => {
-  assert.equal(shouldRealize(500_000, 200_000), true);
+test("worthTrading trades a position whose proceeds clear the round-trip fee", () => {
+  assert.equal(worthTrading(500_000, 100_000), true);
 });
 
-test("shouldRealize sells through a loss smaller than the commission round-trip", () => {
-  assert.equal(shouldRealize(-100_000, 200_000), true);
+test("worthTrading refuses a dust position the fee would dominate", () => {
+  assert.equal(worthTrading(9_500, 100_000), false);
 });
 
-test("shouldRealize holds a loss bigger than the commission round-trip", () => {
-  assert.equal(shouldRealize(-300_000, 200_000), false);
+test("worthTrading trades a large position that is deeply underwater", () => {
+  // The case that was frozen in the live game: a $9.32b WDS holding down $268m. Proceeds
+  // dwarf the fee, so the loss is realised and the capital recycled.
+  assert.equal(worthTrading(9_320_000_000, 100_000), true);
 });
 
-test("shouldRealize holds at exactly the tolerance boundary", () => {
-  assert.equal(shouldRealize(-200_000, 200_000), false);
+test("worthTrading holds at exactly the round-trip boundary", () => {
+  assert.equal(worthTrading(200_000, 100_000), false);
+});
+
+// ── fitSharesToBudget ───────────────────────────────────────────────────────
+//
+// getPurchaseCost() prices in the spread AND the price impact of a large order;
+// getAskPrice() prices in neither. stock-trader.js sized orders from askPrice and then
+// checked them against getPurchaseCost, so a budget-bound order always came out over
+// budget and was skipped in silence — no buy, no log line.
+//
+// It never bit while the only buys were opening positions from zero, because maxShares
+// bound first. Topping positions up makes orders budget-bound, so every buy would fail.
+// costOf is injected so the shrink loop is testable without the game.
+
+test("fitSharesToBudget keeps an order that already fits", () => {
+  const costOf = (shares) => shares * 100;
+  assert.equal(fitSharesToBudget({ shares: 50, budget: 10_000, costOf }), 50);
+});
+
+test("fitSharesToBudget shrinks an order past the price impact of its own size", () => {
+  // 10% impact: the order costs more per share than askPrice implied.
+  const costOf = (shares) => shares * 110;
+  const fitted = fitSharesToBudget({ shares: 100, budget: 10_000, costOf });
+  assert.ok(fitted > 0, "should buy what fits rather than skipping the trade");
+  assert.ok(costOf(fitted) <= 10_000, `cost ${costOf(fitted)} must fit the budget`);
+});
+
+test("fitSharesToBudget returns zero when even one share is unaffordable", () => {
+  const costOf = (shares) => shares * 5_000 + 100_000;
+  assert.equal(fitSharesToBudget({ shares: 10, budget: 1_000, costOf }), 0);
+});
+
+test("fitSharesToBudget returns zero for a non-positive order", () => {
+  const costOf = (shares) => shares * 100;
+  assert.equal(fitSharesToBudget({ shares: 0, budget: 10_000, costOf }), 0);
+});
+
+// ── stockBudget ─────────────────────────────────────────────────────────────
+//
+// The budget is recomputed every 6 s cycle, so a flat "spend 25% of cash" compounds:
+// 0.75^N. Once positions could actually be topped up, a $9.12b balance modelled down to
+// $514m in one minute and $29m in two — the trader would outbid every other manager simply
+// by running more often. The old `longShares === 0` gate had been an accidental brake on
+// this; nothing was behind it. The reserve is what makes the "keep cash liquid for
+// servers/augs" intent already written into stock-trader.js actually hold.
+
+test("stockBudget spends a share of the cash above the reserve", () => {
+  assert.equal(stockBudget({ money: 9_000_000_000, reserve: 1_000_000_000, percent: 0.25 }), 2_000_000_000);
+});
+
+test("stockBudget stops buying once cash is down to the reserve", () => {
+  assert.equal(stockBudget({ money: 1_000_000_000, reserve: 1_000_000_000, percent: 0.25 }), 0);
+});
+
+test("stockBudget never returns a negative budget below the reserve", () => {
+  assert.equal(stockBudget({ money: 250_000_000, reserve: 1_000_000_000, percent: 0.25 }), 0);
+});
+
+test("stockBudget without a reserve spends a share of everything", () => {
+  assert.equal(stockBudget({ money: 8_000_000_000, reserve: 0, percent: 0.25 }), 2_000_000_000);
+});
+
+// ── rankByConviction ────────────────────────────────────────────────────────
+//
+// Buys walk this order and stop when the budget runs out, so order decides where the money
+// goes. Sorting by raw forecast puts every short candidate — which by definition has the
+// LOWEST forecast — at the tail, where the budget never reaches. Distance from 0.5 is the
+// actual strength of a signal in either direction.
+
+test("rankByConviction puts the strongest signal first", () => {
+  const forecasts = { A: 0.56, B: 0.72, C: 0.51 };
+  assert.deepEqual(rankByConviction(["A", "B", "C"], (s) => forecasts[s]), ["B", "A", "C"]);
+});
+
+test("rankByConviction ranks a strong short alongside a strong long", () => {
+  // 0.20 is as strong a short as 0.80 is a long; a raw descending sort would bury it last.
+  const forecasts = { LONG: 0.62, SHORT: 0.2, WEAK: 0.53 };
+  assert.deepEqual(rankByConviction(["LONG", "SHORT", "WEAK"], (s) => forecasts[s]), ["SHORT", "LONG", "WEAK"]);
+});
+
+test("rankByConviction leaves the caller's array untouched", () => {
+  const symbols = ["A", "B"];
+  rankByConviction(symbols, (s) => (s === "A" ? 0.5 : 0.9));
+  assert.deepEqual(symbols, ["A", "B"]);
 });
 
 // ── momentumSignal ──────────────────────────────────────────────────────────

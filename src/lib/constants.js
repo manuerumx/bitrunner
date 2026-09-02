@@ -94,6 +94,11 @@ export const DEFAULTS = {
   // No-op on BitNodes without hacknet servers (no hashes exist). See managers/hacknet-manager.js.
   hashTargetUpgradesPerCycle: 2,
   stockBudgetPercent: 0.25,
+  // Cash the stock trader will not touch. The budget above is re-evaluated every 6 s, so
+  // without a floor it compounds — 0.75^N drains a balance to a rounding error inside two
+  // minutes and starves the hacknet/server/aug buyers, which poll far less often. Raise it
+  // if you are saving for a big purchase; set it to 0 to let the trader take everything.
+  stockReservedCash: 1e9,
   // Fraction of cash each one-shot buyer may spend per burst; the rest stays liquid for
   // server-buyer.js and augmentation-buyer.js. See docs/API-COVERAGE-AUDIT.md §5.
   // Port openers top out around $250m and unblock rooting, so they get a wide budget.

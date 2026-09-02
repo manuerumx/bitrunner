@@ -46,20 +46,101 @@ export function planMarketUnlocks({ has, costs, money, reserveFraction = 0 }) {
 }
 
 /**
- * Should a position be closed at this profit, or held?
+ * Is this position big enough to be worth a trade at all?
  *
- * Selling pays commission a second time, so closing a position that is only slightly
- * underwater locks in a loss the round-trip fee alone would have caused. `minProfit` is
- * conventionally two commissions.
+ * Direction is the caller's decision — with 4S that is `forecast < 0.5`, which is the
+ * per-tick probability of an uptick and therefore authoritative: holding below 0.5 is
+ * negative expected value regardless of how far underwater the position already is.
  *
- * Both trading paths share this rule. They previously didn't: the 4S path gated on it and
- * the momentum fallback didn't, so the blind trader had the *worse* loss policy of the two.
+ * This was `shouldRealize(profit, minProfit)`, which held anything down by more than two
+ * commissions. Paired with the sell's `forecast < 0.5` gate it refused to exit precisely
+ * the stocks the game had just marked as still falling, and the old `longShares === 0`
+ * buy gate then blocked topping that symbol back up — a one-way ratchet that left a live
+ * portfolio at 0.6% of market capacity with every held position locked.
  *
- * @param {number} profit    realised profit if sold now (negative = underwater)
- * @param {number} minProfit loss tolerance, normally 2 × commission
+ * All that survives of the old rule is its sound half: don't pay the fee twice to trade a
+ * position the fee would dominate.
+ *
+ * @param {number} gain       ns.stock.getSaleGain() — net proceeds, not profit
+ * @param {number} commission one commission; the round trip costs two
  */
-export function shouldRealize(profit, minProfit) {
-  return profit > -minProfit;
+export function worthTrading(gain, commission) {
+  return gain > commission * 2;
+}
+
+/**
+ * Largest share count whose real purchase cost fits inside `budget`.
+ *
+ * ns.stock.getAskPrice() prices in neither the spread nor the price impact a large order
+ * has on itself; ns.stock.getPurchaseCost() prices in both. stock-trader.js sized orders
+ * from the first and checked them against the second, so any order big enough to move the
+ * price came out over budget and was dropped in silence — no purchase, no log line.
+ *
+ * That stayed invisible while the only buys opened positions from zero, because maxShares
+ * bound long before the budget did. Topping positions up makes orders budget-bound, which
+ * would turn a silent skip into the normal outcome of every buy.
+ *
+ * Shrinking by the overshoot ratio converges in one step for a linear impact model and is
+ * capped anyway, so a pathological cost curve gives up rather than spinning.
+ *
+ * @param {{shares: number, budget: number, costOf: (shares: number) => number,
+ *   attempts?: number}} input `costOf` is injected so this is testable without the game.
+ * @returns {number} shares to buy, or 0 if nothing fits
+ */
+export function fitSharesToBudget({ shares, budget, costOf, attempts = 4 }) {
+  let candidate = Math.floor(shares);
+  if (!(candidate > 0) || !(budget > 0)) return 0;
+
+  for (let i = 0; i < attempts; i++) {
+    const cost = costOf(candidate);
+    if (!(cost > 0)) return 0;
+    if (cost <= budget) return candidate;
+
+    // Trim slightly past the overshoot so a linear impact curve lands under the budget
+    // instead of exactly on the boundary that just failed.
+    const next = Math.floor(candidate * (budget / cost) * 0.99);
+    if (next <= 0 || next >= candidate) return 0;
+    candidate = next;
+  }
+
+  return 0;
+}
+
+/**
+ * How much the trader may spend this cycle.
+ *
+ * The budget is recomputed every 6 s, so a flat percentage of cash compounds: spending 25%
+ * per cycle leaves 0.75^N, which took a modelled $9.12b balance to $514m in a minute and
+ * $29m in two. The trader would win every contest for cash against hacknet/server/aug
+ * buyers purely by polling more often.
+ *
+ * Nothing used to stop that because the old `longShares === 0` buy gate meant most cycles
+ * bought nothing at all — an accidental brake, removed along with the freeze it caused.
+ * The reserve is the deliberate replacement, and it is what makes the "cash meant to stay
+ * liquid for servers/augs" intent already stated in stock-trader.js true.
+ *
+ * @param {{money: number, reserve: number, percent: number}} input
+ * @returns {number} spendable this cycle, never negative
+ */
+export function stockBudget({ money, reserve, percent }) {
+  return Math.max(0, money - reserve) * percent;
+}
+
+/**
+ * Symbols ordered by how strong their signal is, in either direction.
+ *
+ * Buys walk this order and stop once the budget is gone, so it decides where the money
+ * lands. A raw descending sort on forecast ranks by bullishness rather than by strength,
+ * which puts every short candidate — lowest forecast by definition — at the tail, past the
+ * point the budget ever reaches. Distance from 0.5 treats a 0.20 short as the equal of a
+ * 0.80 long, which is what they are.
+ *
+ * @param {string[]} symbols
+ * @param {(sym: string) => number} forecastOf
+ * @returns {string[]} a new array; the input is not mutated
+ */
+export function rankByConviction(symbols, forecastOf) {
+  return [...symbols].sort((a, b) => Math.abs(forecastOf(b) - 0.5) - Math.abs(forecastOf(a) - 0.5));
 }
 
 /**

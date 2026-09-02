@@ -1,11 +1,17 @@
 import { DEFAULTS } from "/src/lib/constants.js";
-import { momentumSignal, pushSample, shouldRealize } from "/src/lib/market.js";
+import {
+  fitSharesToBudget,
+  momentumSignal,
+  pushSample,
+  rankByConviction,
+  stockBudget,
+  worthTrading,
+} from "/src/lib/market.js";
 import { log, formatMoney } from "/src/lib/utils.js";
 
 // ns.stock.getConstants() is 0 GB and reports the real commission, so it no longer has to
 // be hardcoded. Read once at startup — it is a game constant, not a live figure.
 let COMMISSION = 100000;
-let MIN_PROFIT = COMMISSION * 2;
 const FORECAST_BUY_THRESHOLD = 0.55;
 const FORECAST_SELL_THRESHOLD = 0.5;
 
@@ -85,7 +91,6 @@ export async function main(ns) {
 
   const constants = ns.stock.getConstants();
   COMMISSION = constants.StockMarketCommission;
-  MIN_PROFIT = COMMISSION * 2;
 
   if (!use4S) {
     ns.tprint("WARN: No 4S Market Data — trading on price momentum only. Buy 4S with:");
@@ -105,78 +110,124 @@ export async function main(ns) {
     // Per-cycle spend cap. Decrement it as we open positions so the full 25% isn't sized
     // against EACH strong-forecast symbol — otherwise the first few symbols could each try to
     // spend the whole budget and drain cash meant to stay liquid for servers/augs.
-    let remaining = money * DEFAULTS.stockBudgetPercent;
+    // stockBudget() holds the reserve back: this runs every 6 s, so an unfloored percentage
+    // compounds and takes everything regardless of what the other managers are saving for.
+    const cycleBudget = stockBudget({
+      money,
+      reserve: DEFAULTS.stockReservedCash,
+      percent: DEFAULTS.stockBudgetPercent,
+    });
+    let remaining = cycleBudget;
 
-    for (const sym of symbols) {
-      const [longShares, longAvg, shortShares, shortAvg] = ns.stock.getPosition(sym);
-      const maxShares = ns.stock.getMaxShares(sym);
+    if (use4S) {
+      // Sell everything that has turned before buying anything. That frees cash and share
+      // headroom for the same cycle, and because the buy pass re-reads the position, a
+      // symbol closed here can be re-opened immediately instead of a cycle later —
+      // previously both passes shared one stale getPosition() read from the top of the loop.
+      /** @type {Map<string, number>} */
+      const forecasts = new Map();
 
-      if (use4S) {
+      for (const sym of symbols) {
         const forecast = ns.stock.getForecast(sym);
-        const volatility = ns.stock.getVolatility(sym);
+        forecasts.set(sym, forecast);
+        const [longShares, longAvg, shortShares, shortAvg] = ns.stock.getPosition(sym);
 
         if (longShares > 0 && forecast < FORECAST_SELL_THRESHOLD) {
           const gain = ns.stock.getSaleGain(sym, longShares, "L");
-          const profit = gain - longShares * longAvg;
-          if (shouldRealize(profit, MIN_PROFIT)) {
-            const salePrice = ns.stock.sellStock(sym, longShares);
-            if (salePrice > 0) {
-              log(ns, `SELL LONG ${sym}: ${longShares} shares, profit ${formatMoney(profit)}`);
-            }
+          if (worthTrading(gain, COMMISSION) && ns.stock.sellStock(sym, longShares) > 0) {
+            const profit = gain - longShares * longAvg;
+            log(ns, `SELL LONG ${sym}: ${longShares} shares, profit ${formatMoney(profit)}`);
           }
         }
 
         if (useShorts && shortShares > 0 && forecast > FORECAST_SELL_THRESHOLD) {
           const gain = ns.stock.getSaleGain(sym, shortShares, "S");
-          const profit = gain - shortShares * shortAvg;
-          if (shouldRealize(profit, MIN_PROFIT)) {
-            const salePrice = ns.stock.sellShort(sym, shortShares);
-            if (salePrice > 0) {
-              log(ns, `SELL SHORT ${sym}: ${shortShares} shares, profit ${formatMoney(profit)}`);
-            }
+          if (worthTrading(gain, COMMISSION) && ns.stock.sellShort(sym, shortShares) > 0) {
+            const profit = gain - shortShares * shortAvg;
+            log(ns, `SELL SHORT ${sym}: ${shortShares} shares, profit ${formatMoney(profit)}`);
           }
         }
+      }
 
-        if (forecast > FORECAST_BUY_THRESHOLD && longShares === 0) {
-          const affordable = Math.floor((remaining - COMMISSION) / ns.stock.getAskPrice(sym));
-          const shares = Math.min(affordable, maxShares);
+      // Strongest signal first, long or short. A single top-up can absorb the whole budget
+      // now that positions are no longer capped at their opening size, so spending in
+      // getSymbols() order would let a merely-adequate symbol outbid the best one purely by
+      // position in a fixed list — and a plain forecast sort would bury every short, since a
+      // short candidate has the lowest forecast by definition and the loop breaks when the
+      // budget runs out.
+      const ranked = rankByConviction(symbols, (sym) => forecasts.get(sym) ?? 0.5);
+
+      for (const sym of ranked) {
+        if (remaining <= COMMISSION * 2) break;
+
+        const forecast = forecasts.get(sym) ?? 0;
+        const maxShares = ns.stock.getMaxShares(sym);
+        const [longShares, , shortShares] = ns.stock.getPosition(sym);
+
+        // `longShares < maxShares` rather than `=== 0`: a position used to be sized once,
+        // against whatever cash was on hand the cycle it opened, and never added to again.
+        // A symbol bought while poor stayed that size for the rest of the run no matter how
+        // far net worth grew — the portfolio sat at 0.6% of what the market would allow.
+        if (forecast > FORECAST_BUY_THRESHOLD && longShares < maxShares) {
+          const wanted = Math.min(
+            maxShares - longShares,
+            Math.floor((remaining - COMMISSION) / ns.stock.getAskPrice(sym)),
+          );
+          const shares = fitSharesToBudget({
+            shares: wanted,
+            budget: remaining,
+            costOf: (n) => ns.stock.getPurchaseCost(sym, n, "L"),
+          });
           if (shares > 0) {
             const cost = ns.stock.getPurchaseCost(sym, shares, "L");
-            if (cost <= remaining && cost > 0) {
-              const price = ns.stock.buyStock(sym, shares);
-              if (price > 0) {
-                remaining -= cost;
-                log(ns, `BUY LONG ${sym}: ${shares} shares @ ${formatMoney(price)} (forecast: ${(forecast * 100).toFixed(1)}%)`);
-              }
+            const price = ns.stock.buyStock(sym, shares);
+            if (price > 0) {
+              remaining -= cost;
+              const verb = longShares > 0 ? "ADD LONG" : "BUY LONG";
+              log(ns, `${verb} ${sym}: ${shares} shares @ ${formatMoney(price)} (forecast: ${(forecast * 100).toFixed(1)}%)`);
             }
           }
         }
 
-        if (useShorts && forecast < 1 - FORECAST_BUY_THRESHOLD && shortShares === 0) {
-          const affordable = Math.floor((remaining - COMMISSION) / ns.stock.getBidPrice(sym));
-          const shares = Math.min(affordable, maxShares);
+        // Assumes maxShares caps each side independently. If the game instead caps
+        // long + short combined, a symbol held on both sides would overshoot and buyShort
+        // would reject the order — harmless (the buy just fails) and unreachable without
+        // BitNode-8 / SF-8.2, but it is the assumption to revisit if shorts ever misbehave.
+        if (useShorts && forecast < 1 - FORECAST_BUY_THRESHOLD && shortShares < maxShares) {
+          const wanted = Math.min(
+            maxShares - shortShares,
+            Math.floor((remaining - COMMISSION) / ns.stock.getBidPrice(sym)),
+          );
+          const shares = fitSharesToBudget({
+            shares: wanted,
+            budget: remaining,
+            costOf: (n) => ns.stock.getPurchaseCost(sym, n, "S"),
+          });
           if (shares > 0) {
             const cost = ns.stock.getPurchaseCost(sym, shares, "S");
-            if (cost <= remaining && cost > 0) {
-              try {
-                const price = ns.stock.buyShort(sym, shares);
-                if (price > 0) {
-                  remaining -= cost;
-                  log(ns, `BUY SHORT ${sym}: ${shares} shares @ ${formatMoney(price)} (forecast: ${(forecast * 100).toFixed(1)}%)`);
-                }
-              } catch {
-                // Shorting needs BitNode-8 or SF-8 lvl 2. hasShortAccess() can't detect this
-                // (getPosition works with plain TIX), so disable shorts on the first rejection.
-                useShorts = false;
-                log(ns, "Short selling unavailable (needs BitNode-8 / SF-8.2) — disabling shorts");
+            try {
+              const price = ns.stock.buyShort(sym, shares);
+              if (price > 0) {
+                remaining -= cost;
+                const verb = shortShares > 0 ? "ADD SHORT" : "BUY SHORT";
+                log(ns, `${verb} ${sym}: ${shares} shares @ ${formatMoney(price)} (forecast: ${(forecast * 100).toFixed(1)}%)`);
               }
+            } catch {
+              // Shorting needs BitNode-8 or SF-8 lvl 2. hasShortAccess() can't detect this
+              // (getPosition works with plain TIX), so disable shorts on the first rejection.
+              useShorts = false;
+              log(ns, "Short selling unavailable (needs BitNode-8 / SF-8.2) — disabling shorts");
             }
           }
         }
-      } else {
-        // No 4S data: trade observed momentum instead. Every buy/sell in this manager used
-        // to sit inside the `if (use4S)` above, so without 4S the loop ran forever and
-        // never traded — it read prices, decided nothing, and slept.
+      }
+    } else {
+      // No 4S data: trade observed momentum instead. Every buy/sell in this manager used
+      // to sit inside the `if (use4S)` above, so without 4S the loop ran forever and
+      // never traded — it read prices, decided nothing, and slept.
+      for (const sym of symbols) {
+        const [longShares, longAvg] = ns.stock.getPosition(sym);
+        const maxShares = ns.stock.getMaxShares(sym);
         const price = ns.stock.getPrice(sym);
         history[sym] = pushSample(history[sym], price, MOMENTUM_WINDOW);
         const signal = momentumSignal(history[sym], {
@@ -187,23 +238,32 @@ export async function main(ns) {
 
         if (signal === "sell" && longShares > 0) {
           const gain = ns.stock.getSaleGain(sym, longShares, "L");
-          const profit = gain - longShares * longAvg;
-          // Same loss tolerance the 4S path uses. Without it the fallback trader would
-          // dump on a 2% dip and pay commission twice to realise the loss.
-          if (shouldRealize(profit, MIN_PROFIT) && ns.stock.sellStock(sym, longShares) > 0) {
+          // Same dust filter the 4S path uses: a falling window is the signal to leave, so
+          // the only reason left to stay is a position too small to be worth the fee.
+          if (worthTrading(gain, COMMISSION) && ns.stock.sellStock(sym, longShares) > 0) {
+            const profit = gain - longShares * longAvg;
             log(ns, `SELL LONG ${sym}: ${longShares} shares, profit ${formatMoney(profit)} (momentum)`);
           }
         }
 
-        if (signal === "buy" && longShares === 0) {
-          const slice = Math.min(remaining, money * DEFAULTS.stockBudgetPercent * MOMENTUM_POSITION_FRACTION);
-          const affordable = Math.floor((slice - COMMISSION) / ns.stock.getAskPrice(sym));
-          const shares = Math.min(affordable, maxShares);
+        // Blind positions grow too, but only a slice per cycle — without a forecast there
+        // is nothing to justify concentrating the budget the way the 4S path does.
+        if (signal === "buy" && longShares < maxShares) {
+          const slice = Math.min(remaining, cycleBudget * MOMENTUM_POSITION_FRACTION);
+          const wanted = Math.min(
+            maxShares - longShares,
+            Math.floor((slice - COMMISSION) / ns.stock.getAskPrice(sym)),
+          );
+          const shares = fitSharesToBudget({
+            shares: wanted,
+            budget: slice,
+            costOf: (n) => ns.stock.getPurchaseCost(sym, n, "L"),
+          });
           if (shares > 0) {
             const cost = ns.stock.getPurchaseCost(sym, shares, "L");
-            if (cost > 0 && cost <= remaining && ns.stock.buyStock(sym, shares) > 0) {
+            if (ns.stock.buyStock(sym, shares) > 0) {
               remaining -= cost;
-              log(ns, `BUY LONG ${sym}: ${shares} shares (momentum)`);
+              log(ns, `${longShares > 0 ? "ADD" : "BUY"} LONG ${sym}: ${shares} shares (momentum)`);
             }
           }
         }

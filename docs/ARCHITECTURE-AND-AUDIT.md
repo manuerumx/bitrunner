@@ -41,7 +41,7 @@ not "fixed" by mistake).
 >   `getServerMaxMoney` in `calculateBatch`; **F‑9** clamp negative HWGW delays; **F‑19** drop
 >   dead `scanner.getAllServers`; **F‑29** guard the 3 grid solvers against empty matrices;
 >   **F‑25** hacknet buys multiple upgrades/cycle within budget; **F‑39** stock short value uses
->   market price; **F‑40** drop dead `maxShares − shares` arithmetic; **F‑42** faction auto‑join
+>   market price; **F‑40** *(inverted — the `=== 0` guard was the defect; positions now top up)*; **F‑42** faction auto‑join
 >   respects mutually‑exclusive city factions; **F‑43** NeuroFlux loop drops the 100‑cap and
 >   hoists invariant lookups; **F‑46/F‑49** gang/bladeburner hoist per‑cycle NS calls out of
 >   loops; **F‑47** sleeve assignment falls back to crime instead of silently idling; **F‑50**
@@ -357,7 +357,7 @@ by adversarial verification (see §7), blank = not separately verified (lower‑
 | F‑38 | 🟡 | efficiency | `faction-manager` goes **idle once the top faction's rep target is met** instead of advancing to the next faction with reachable augs. | Exclude maxed factions; re‑pick next‑best; only idle when none remain. |
 | F‑44 | 🟡 | ram‑dist | Singularity/Stock‑heavy always‑on managers inflate **home static RAM**, shrinking home's botnet contribution. | Keep lean; consider running them on a small purchased server; ensure `reservedHomeRAM` covers them. |
 | F‑39 | ⚪ | correctness | `getPortfolio` reports short positions at cost basis, not market value (cosmetic; affects no decision). | Use ask price, or label the metric. |
-| F‑40 | ⚪ | maint | Dead `maxShares - longShares/shortShares` arithmetic inside `=== 0` guards. | Use `maxShares` directly. |
+| F‑40 | ✅ | maint | ~~Dead `maxShares - longShares/shortShares` arithmetic inside `=== 0` guards.~~ **Resolved the other way:** the `=== 0` guards were the bug, not the arithmetic. A position was sized once against the cash on hand the cycle it opened and never added to, so a portfolio held 0.6 % of market capacity against $7.8 t of headroom while cash sat idle. Guards are now `shares < maxShares` and the subtraction is live — it buys the delta. | Done — see `worthTrading`/`fitSharesToBudget` in `lib/market.js`. |
 | F‑41 | ⚪ | ram‑dist | `STOCK_SIGNALS`/`STOCK_STATUS` ports reserved but unused — no stock‑manipulation synergy or monitor telemetry. | Publish `STOCK_STATUS`; optionally consume `STOCK_SIGNALS` to bias trades toward grow/hack‑manipulated symbols. |
 | F‑42 | ⚪ | robustness | Unbounded auto‑join of all faction invitations can lock out mutually‑exclusive (city) factions. | Allow/deny list before `joinFaction`. |
 | F‑43 | ⚪ | efficiency | `buyNeuroFlux` fixed 100‑iteration cap + invariant per‑iteration singularity calls. | Rely on the `price > money` break; hoist the rep‑req lookup. |
