@@ -45,6 +45,76 @@ export function planMarketUnlocks({ has, costs, money, reserveFraction = 0 }) {
   return planPurchases({ money, reserveFraction, items, stopOnUnaffordable: true });
 }
 
+// Trading thresholds, shared so the trader and the report cannot drift apart.
+//
+// stock-report.js used to re-declare these as local constants under a comment claiming they
+// were "kept in sync by importing the same rule the trader applies" — they were not. Its
+// ACTION column is only trustworthy if it applies the trader's actual numbers.
+export const FORECAST_BUY_THRESHOLD = 0.55;
+export const FORECAST_SELL_THRESHOLD = 0.5;
+
+/**
+ * How much of the cycle budget one symbol may take.
+ *
+ * The 4S buy loop sized both `wanted` and its budget against the whole `remaining`, so the
+ * first symbol on the ranked list spent all of it and the loop broke on the next iteration.
+ * Exactly one symbol was funded per cycle, and since 4S forecasts drift slowly it was the
+ * same symbol every cycle: a live portfolio held 100% FLCM — the single strongest forecast
+ * on the board — while 15 other bullish symbols never received a dollar.
+ *
+ * stock-trader.js already documented the opposite intent ("the full 25% isn't sized against
+ * EACH strong-forecast symbol"); `remaining` alone could not deliver it, because nothing
+ * stopped the first taker from emptying it. The momentum path had the missing half all
+ * along as its own position fraction, so this is that rule, shared by both paths now.
+ *
+ * A per-cycle cap, not a cap on total position size: a symbol that stays top-ranked still
+ * accumulates across cycles, which is the point of conviction ranking. What it can no
+ * longer do is starve rank #2 on the way there.
+ *
+ * @param {{remaining: number, cycleBudget: number, fraction: number}} input
+ * @returns {number} spendable on this symbol, never negative
+ */
+export function positionSlice({ remaining, cycleBudget, fraction }) {
+  return Math.max(0, Math.min(remaining, cycleBudget * fraction));
+}
+
+/**
+ * What the portfolio looks like against the capital that can actually reach it.
+ *
+ * stock-report.js judged the portfolio against total market capacity and read a 0.6% fill
+ * as "the trader is under-investing". But fill is bounded by net worth: $33.77b in a $5.36t
+ * market cannot exceed 0.63%, so the trader was at 95% of its ceiling and the report called
+ * that a failure. The verdict could not do otherwise until the player was worth trillions.
+ *
+ * That false signal is what justified removing the buy gate in 8657540 without adding a
+ * per-symbol cap — which produced the concentration `concentration` now measures. It was
+ * 100% in the run that prompted this, and nothing on the old report showed it.
+ *
+ * Cash below the reserve is excluded: the trader is forbidden to spend it, so counting it
+ * would report the trader as under-deployed for money it may not touch.
+ *
+ * @param {{positions: Array<{sym: string, value: number}>, cash: number, reserve: number}} input
+ * @returns {{held: number, investable: number, deployed: number,
+ *   concentration: number, topSymbol: string | null}}
+ */
+export function portfolioStats({ positions, cash, reserve }) {
+  const held = positions.reduce((sum, p) => sum + p.value, 0);
+  const investable = held + Math.max(0, cash - reserve);
+
+  let top = null;
+  for (const p of positions) {
+    if (!top || p.value > top.value) top = p;
+  }
+
+  return {
+    held,
+    investable,
+    deployed: investable > 0 ? held / investable : 0,
+    concentration: held > 0 && top ? top.value / held : 0,
+    topSymbol: top ? top.sym : null,
+  };
+}
+
 /**
  * Is this position big enough to be worth a trade at all?
  *

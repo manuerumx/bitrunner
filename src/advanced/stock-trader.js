@@ -1,7 +1,10 @@
 import { DEFAULTS } from "/src/lib/constants.js";
 import {
+  FORECAST_BUY_THRESHOLD,
+  FORECAST_SELL_THRESHOLD,
   fitSharesToBudget,
   momentumSignal,
+  positionSlice,
   pushSample,
   rankByConviction,
   stockBudget,
@@ -12,8 +15,15 @@ import { log, formatMoney } from "/src/lib/utils.js";
 // ns.stock.getConstants() is 0 GB and reports the real commission, so it no longer has to
 // be hardcoded. Read once at startup — it is a game constant, not a live figure.
 let COMMISSION = 100000;
-const FORECAST_BUY_THRESHOLD = 0.55;
-const FORECAST_SELL_THRESHOLD = 0.5;
+
+// Cap on how much of one cycle's budget a single symbol may take, so the ranked list gets
+// funded rather than just its head. Without it both `wanted` and fitSharesToBudget sized
+// against the whole `remaining`, the top-ranked symbol spent all of it, and the loop broke
+// one iteration later — one symbol funded per cycle, and the same one each cycle, because
+// 4S forecasts barely move between ticks. A live portfolio sat 100% in FLCM with fifteen
+// other bullish symbols unfunded. It applies to blind momentum trading for the second
+// reason too: with no forecast to justify concentrating, spread thin.
+const POSITION_BUDGET_FRACTION = 0.2;
 
 // Fallback trading, used only when 4S market data isn't owned. Without a forecast the
 // only signal is observed price history, so the bar is deliberately higher: a position
@@ -22,9 +32,6 @@ const MOMENTUM_WINDOW = 20; // samples kept per symbol (~2 min at the 6 s cycle)
 const MOMENTUM_MIN_SAMPLES = 12;
 const MOMENTUM_BUY_THRESHOLD = 0.04;
 const MOMENTUM_SELL_THRESHOLD = 0.02;
-// Cap on how much of the per-cycle budget one non-4S position may take. Blind trading
-// should be spread thin.
-const MOMENTUM_POSITION_FRACTION = 0.2;
 
 function hasTIX(ns) {
   try {
@@ -107,9 +114,10 @@ export async function main(ns) {
   while (true) {
     const symbols = ns.stock.getSymbols();
     const money = ns.getPlayer().money;
-    // Per-cycle spend cap. Decrement it as we open positions so the full 25% isn't sized
-    // against EACH strong-forecast symbol — otherwise the first few symbols could each try to
-    // spend the whole budget and drain cash meant to stay liquid for servers/augs.
+    // Per-cycle spend cap, decremented as positions open so the buy pass can't spend more
+    // than 25% of the surplus in one cycle and drain cash meant to stay liquid for
+    // servers/augs. positionSlice() then bounds what any ONE symbol takes out of it — the
+    // decrement alone never did, because nothing stopped the first taker from emptying it.
     // stockBudget() holds the reserve back: this runs every 6 s, so an unfloored percentage
     // compounds and takes everything regardless of what the other managers are saving for.
     const cycleBudget = stockBudget({
@@ -149,12 +157,12 @@ export async function main(ns) {
         }
       }
 
-      // Strongest signal first, long or short. A single top-up can absorb the whole budget
-      // now that positions are no longer capped at their opening size, so spending in
-      // getSymbols() order would let a merely-adequate symbol outbid the best one purely by
-      // position in a fixed list — and a plain forecast sort would bury every short, since a
-      // short candidate has the lowest forecast by definition and the loop breaks when the
-      // budget runs out.
+      // Strongest signal first, long or short. Order matters because the budget runs out
+      // partway down the list: spending in getSymbols() order would let a merely-adequate
+      // symbol outbid the best one purely by position in a fixed list, and a plain forecast
+      // sort would bury every short, since a short candidate has the lowest forecast by
+      // definition. Ranking decides who gets funded first; positionSlice decides how far
+      // down the list the money reaches.
       const ranked = rankByConviction(symbols, (sym) => forecasts.get(sym) ?? 0.5);
 
       for (const sym of ranked) {
@@ -163,6 +171,9 @@ export async function main(ns) {
         const forecast = forecasts.get(sym) ?? 0;
         const maxShares = ns.stock.getMaxShares(sym);
         const [longShares, , shortShares] = ns.stock.getPosition(sym);
+        // One slice per symbol: a symbol is either bullish enough to buy or bearish enough
+        // to short, never both, so the two branches below cannot double-spend it.
+        const slice = positionSlice({ remaining, cycleBudget, fraction: POSITION_BUDGET_FRACTION });
 
         // `longShares < maxShares` rather than `=== 0`: a position used to be sized once,
         // against whatever cash was on hand the cycle it opened, and never added to again.
@@ -171,11 +182,11 @@ export async function main(ns) {
         if (forecast > FORECAST_BUY_THRESHOLD && longShares < maxShares) {
           const wanted = Math.min(
             maxShares - longShares,
-            Math.floor((remaining - COMMISSION) / ns.stock.getAskPrice(sym)),
+            Math.floor((slice - COMMISSION) / ns.stock.getAskPrice(sym)),
           );
           const shares = fitSharesToBudget({
             shares: wanted,
-            budget: remaining,
+            budget: slice,
             costOf: (n) => ns.stock.getPurchaseCost(sym, n, "L"),
           });
           if (shares > 0) {
@@ -196,11 +207,11 @@ export async function main(ns) {
         if (useShorts && forecast < 1 - FORECAST_BUY_THRESHOLD && shortShares < maxShares) {
           const wanted = Math.min(
             maxShares - shortShares,
-            Math.floor((remaining - COMMISSION) / ns.stock.getBidPrice(sym)),
+            Math.floor((slice - COMMISSION) / ns.stock.getBidPrice(sym)),
           );
           const shares = fitSharesToBudget({
             shares: wanted,
-            budget: remaining,
+            budget: slice,
             costOf: (n) => ns.stock.getPurchaseCost(sym, n, "S"),
           });
           if (shares > 0) {
@@ -246,10 +257,11 @@ export async function main(ns) {
           }
         }
 
-        // Blind positions grow too, but only a slice per cycle — without a forecast there
-        // is nothing to justify concentrating the budget the way the 4S path does.
+        // Blind positions grow too, but only a slice per cycle — the same cap the 4S path
+        // uses, and doubly warranted here: without a forecast there is nothing to justify
+        // concentrating the budget at all.
         if (signal === "buy" && longShares < maxShares) {
-          const slice = Math.min(remaining, cycleBudget * MOMENTUM_POSITION_FRACTION);
+          const slice = positionSlice({ remaining, cycleBudget, fraction: POSITION_BUDGET_FRACTION });
           const wanted = Math.min(
             maxShares - longShares,
             Math.floor((slice - COMMISSION) / ns.stock.getAskPrice(sym)),

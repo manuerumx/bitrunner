@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import {
   fitSharesToBudget,
   momentumSignal,
+  portfolioStats,
+  positionSlice,
   planMarketUnlocks,
   pushSample,
   rankByConviction,
@@ -238,4 +240,111 @@ test("planMarketUnlocks honours the reserve fraction", () => {
     reserveFraction: 0.5,
   });
   assert.deepEqual(plan.buy, []);
+});
+
+// ── positionSlice ───────────────────────────────────────────────────────────
+//
+// The bug this exists to prevent: the 4S buy loop sized every order against the whole
+// remaining budget, so the first symbol on the ranked list spent all of it and the loop
+// broke on the next iteration. One symbol funded per cycle — and because 4S forecasts
+// drift slowly, the same symbol every cycle. A live portfolio ended up 100% in FLCM, the
+// single strongest forecast on the board, while 15 other bullish symbols never got a
+// dollar. stock-trader.js:110-114 had already stated the opposite intent ("the full 25%
+// isn't sized against EACH strong-forecast symbol"); nothing implemented it.
+//
+// The momentum path had the rule right the whole time, so this is its shape, shared.
+
+test("positionSlice caps one symbol at its share of the cycle budget", () => {
+  assert.equal(positionSlice({ remaining: 1_000_000, cycleBudget: 1_000_000, fraction: 0.2 }), 200_000);
+});
+
+test("positionSlice leaves budget for the rest of the ranked list", () => {
+  // Five symbols at 20% each, which is the whole point: rank #1 no longer starves rank #2.
+  let remaining = 1_000_000;
+  const spent = [];
+  for (let i = 0; i < 5; i++) {
+    const slice = positionSlice({ remaining, cycleBudget: 1_000_000, fraction: 0.2 });
+    spent.push(slice);
+    remaining -= slice;
+  }
+  assert.deepEqual(spent, [200_000, 200_000, 200_000, 200_000, 200_000]);
+  assert.equal(remaining, 0);
+});
+
+test("positionSlice never exceeds what is actually left", () => {
+  // Late in the cycle the cap is no longer the binding constraint; the cash is.
+  assert.equal(positionSlice({ remaining: 50_000, cycleBudget: 1_000_000, fraction: 0.2 }), 50_000);
+});
+
+test("positionSlice with a full fraction hands over the whole remainder", () => {
+  assert.equal(positionSlice({ remaining: 800_000, cycleBudget: 1_000_000, fraction: 1 }), 800_000);
+});
+
+test("positionSlice never returns a negative slice", () => {
+  assert.equal(positionSlice({ remaining: -5, cycleBudget: 1_000_000, fraction: 0.2 }), 0);
+});
+
+// ── portfolioStats ──────────────────────────────────────────────────────────
+//
+// stock-report.js measured the portfolio against total market capacity and concluded
+// "the trader is under-investing" from a 0.6% fill. But a $33.77b net worth in a $5.36t
+// market cannot exceed 0.63% fill by definition — the trader was at 95% of its ceiling and
+// the report read that as a failure. That false verdict is what motivated removing the
+// buy gate in 8657540, which produced the single-symbol concentration above.
+//
+// Capital is the binding constraint, not market capacity, so `deployed` measures against
+// money the player can actually invest. `concentration` is the number that was missing:
+// it is 100% in the run that prompted this, and nothing on the old report showed it.
+
+test("portfolioStats measures deployment against investable capital, not the market", () => {
+  // The live figures: $30.69b held, $3.08b cash, $1b reserve.
+  const stats = portfolioStats({
+    positions: [{ sym: "FLCM", value: 30.69e9 }],
+    cash: 3.08e9,
+    reserve: 1e9,
+  });
+  assert.equal(stats.held, 30.69e9);
+  assert.equal(stats.investable, 30.69e9 + 2.08e9);
+  assert.ok(Math.abs(stats.deployed - 0.937) < 0.001, `deployed was ${stats.deployed}`);
+});
+
+test("portfolioStats reports concentration in the largest position", () => {
+  const stats = portfolioStats({
+    positions: [{ sym: "FLCM", value: 30.69e9 }],
+    cash: 3.08e9,
+    reserve: 1e9,
+  });
+  assert.equal(stats.concentration, 1);
+  assert.equal(stats.topSymbol, "FLCM");
+});
+
+test("portfolioStats sees a spread portfolio as unconcentrated", () => {
+  const stats = portfolioStats({
+    positions: [
+      { sym: "A", value: 25 },
+      { sym: "B", value: 25 },
+      { sym: "C", value: 25 },
+      { sym: "D", value: 25 },
+    ],
+    cash: 0,
+    reserve: 0,
+  });
+  assert.equal(stats.concentration, 0.25);
+  assert.equal(stats.deployed, 1);
+});
+
+test("portfolioStats treats an empty portfolio as fully undeployed", () => {
+  const stats = portfolioStats({ positions: [], cash: 5e9, reserve: 1e9 });
+  assert.equal(stats.held, 0);
+  assert.equal(stats.deployed, 0);
+  assert.equal(stats.concentration, 0);
+  assert.equal(stats.topSymbol, null);
+});
+
+test("portfolioStats ignores cash below the reserve as uninvestable", () => {
+  // Cash under the reserve is not capital the trader may spend, so counting it would
+  // report the trader as under-deployed for money it is forbidden to touch.
+  const stats = portfolioStats({ positions: [{ sym: "A", value: 100 }], cash: 500, reserve: 900 });
+  assert.equal(stats.investable, 100);
+  assert.equal(stats.deployed, 1);
 });
