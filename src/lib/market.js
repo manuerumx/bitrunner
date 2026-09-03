@@ -50,6 +50,11 @@ export function planMarketUnlocks({ has, costs, money, reserveFraction = 0 }) {
 // stock-report.js used to re-declare these as local constants under a comment claiming they
 // were "kept in sync by importing the same rule the trader applies" — they were not. Its
 // ACTION column is only trustworthy if it applies the trader's actual numbers.
+//
+// The buy threshold must stay above 0.5. stock-trader.js shorts on `forecast < 1 - buy`,
+// so a threshold at or below 0.5 makes the long and short branches overlap — and they
+// share one positionSlice() computed before either runs, so an overlapping symbol could
+// spend its slice twice.
 export const FORECAST_BUY_THRESHOLD = 0.55;
 export const FORECAST_SELL_THRESHOLD = 0.5;
 
