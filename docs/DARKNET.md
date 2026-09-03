@@ -6,6 +6,11 @@
 **Status:** mapping, stasis linking and heartbleed intel are built and tested. Password
 *discovery* is not — see §9.
 
+> **Just want to use it?** Start with [DARKNET-QUICKSTART.md](DARKNET-QUICKSTART.md) — the
+> step-by-step walkthrough, including the manual step that unsticks a scan pinned at one
+> hop. The prerequisite checklist is [DARKNET-REQUIREMENTS.md](DARKNET-REQUIREMENTS.md).
+> This document is the *why*.
+
 > **Short version.** The darknet can only be explored from *inside* it: almost every
 > `ns.dnet` call reaches only servers directly connected to the machine the script is
 > running on. So we ship small workers out to darknet servers and have them report home
@@ -66,7 +71,7 @@ are thin I/O shells around it.
 | File | Constant | Contents |
 |---|---|---|
 | `/data/darknet-passwords.txt` | `PASSWORD_FILE` | `{host: password}`. **Doubles as the registry of known servers** — a host is actionable exactly when we know its password. |
-| `/data/darknet-map.txt` | `MAP_FILE` | `{host: {depth, difficulty, hint, data, passwordFormat, passwordLength, requiredCharisma, isStationary, isOnline, seenFrom, neighbors}}`. Last-seen topology plus cracking intel. |
+| `/data/darknet-map.txt` | `MAP_FILE` | `{host: {modelId, depth, difficulty, hint, data, passwordFormat, passwordLength, requiredCharisma, isStationary, isOnline, seenFrom, neighbors}}`. Last-seen topology plus cracking intel. |
 | `/data/darknet-logs.txt` | `LOGS_FILE` | `{host: {logs: [...]}}`. The heartbleed corpus, accumulated without duplicates. |
 
 ### Ports
@@ -297,9 +302,12 @@ run /src/tools/stasis.js link darkweb ""     # now works
    `authenticate(host, password)` against a `modelId → password` table would close the
    deadlock. The table currently has exactly one known entry: **`ZeroLogon` → `""`**
    (from `tools/darknet-demo.js`, the reference script shipped with the API docs).
-2. **`modelId` discoveries are not persisted.** The demo's `default:` branch prints
-   `Unrecognized modelId: <X>` to the terminal and throws it away. That output is the raw
-   material for the model table and belongs in a file next to `MAP_FILE`.
+2. **The model table itself is still empty.** `modelId` *is* now persisted — every probe
+   report carries it into `MAP_FILE`, and `darknet-scan.js intel` prints it as the first
+   field of each host's line, so model IDs accumulate as a side effect of crawling. What
+   does not exist is the `modelId → password strategy` table those observations feed:
+   today it would have exactly one row, `ZeroLogon` → `""`. A seeder that reads the map and
+   tries the known strategy per model is the remaining half of this lead.
 3. **A timing oracle probably exists.** `formulas.dnet.getAuthenticateTime()` takes a
    `correctCharactersInPassword` parameter documented as *"only used for `2G_cellular`
    model servers"*. If authentication time varies with how many characters are right, that
@@ -392,7 +400,7 @@ global, so reporting home from depth 5 costs nothing.
 
 ## 11. Test coverage
 
-`test/darknet.test.js` — 37 tests, all against pure functions in `lib/darknet.js`:
+`test/darknet.test.js` — 38 tests, all against pure functions in `lib/darknet.js`:
 `parsePasswordStore`, `planStasisLinks` (every skip reason and the ranking), `buildCandidate`,
 `pickCrawlHosts`, `mergeDarknetMap`, `planCrackTargets`, `mergeHeartbleedLogs`,
 `resolveLinkPassword`.
@@ -409,6 +417,6 @@ That conjunction is real logic sitting in an untested shell — the same shape a
 that started this. If it grows another condition, extract it too.
 
 ```bash
-npm test        # 266 tests
+npm test        # 322 tests
 npm run check   # tsc against jsconfig.json
 ```

@@ -15,6 +15,7 @@ export async function main(ns) {
   for (const host of ns.dnet.probe()) {
     const d = ns.dnet.getServerDetails(host);
     report.neighbors[host] = {
+      modelId: d.modelId,
       depth: d.depth,
       difficulty: d.difficulty,
       hint: d.passwordHint,

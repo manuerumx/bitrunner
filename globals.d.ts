@@ -91,6 +91,7 @@ declare global {
     neighbors: Record<
       string,
       {
+        modelId: string;
         depth: number;
         difficulty: number;
         hint: string;

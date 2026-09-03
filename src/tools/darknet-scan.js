@@ -49,6 +49,7 @@ function buildLocalReport(ns, from, hosts) {
   for (const host of hosts) {
     const d = ns.dnet.getServerDetails(host);
     report.neighbors[host] = {
+      modelId: d.modelId,
       depth: d.depth,
       difficulty: d.difficulty,
       hint: d.passwordHint,
@@ -93,7 +94,10 @@ async function probeRemote(ns, host, password) {
 /** Cracking intel lines for one mapped host. @param {NS} ns */
 function printIntel(ns, host, entry) {
   const state = entry.isOnline === false ? " [OFFLINE]" : entry.isStationary ? " [stationary]" : "";
-  ns.tprint(`  ${host}${state} — depth ${entry.depth ?? "?"}, difficulty ${entry.difficulty ?? "?"}`);
+  ns.tprint(
+    `  ${host}${state} — model ${entry.modelId ?? "?"}, ` +
+      `depth ${entry.depth ?? "?"}, difficulty ${entry.difficulty ?? "?"}`
+  );
   ns.tprint(
     `      password: ${entry.passwordFormat ?? "?"} × ${entry.passwordLength ?? "?"}, ` +
       `heartbleed charisma ≥ ${entry.requiredCharisma ?? "?"}`
