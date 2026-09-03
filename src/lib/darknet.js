@@ -11,7 +11,7 @@
 export const PASSWORD_FILE = "/data/darknet-passwords.txt";
 
 // Everything darknet-scan.js has learned about the net: per-host cracking intel
-// (password hint/format/length, required charisma) plus last-seen topology. Stale
+// (model, password hint/format/length, required charisma) plus last-seen topology. Stale
 // entries stay — a host nobody probed this round has merely mutated out of view.
 export const MAP_FILE = "/data/darknet-map.txt";
 

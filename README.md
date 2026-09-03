@@ -128,6 +128,12 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 > builds the corpus that would answer that; cracking stays yours. Captures land in
 > `/data/darknet-logs.txt`, and charisma gates which servers are reachable at all.
 
+> 🧭 **Scan stuck at one hop?** That's the expected behaviour of an empty password store,
+> not a bug — the crawler can only probe *from* a server whose password it already knows.
+> [`docs/DARKNET-QUICKSTART.md`](docs/DARKNET-QUICKSTART.md) walks through breaking the
+> deadlock; [`docs/DARKNET-REQUIREMENTS.md`](docs/DARKNET-REQUIREMENTS.md) is the
+> prerequisite checklist.
+
 > 🧑‍🔬 **Fun note:** purchased servers are named after famous computer scientists — `turing`, `lovelace`, `hopper`, `dijkstra`, `von-neumann`… The server-buyer picks a random unused name from the hall of fame in `src/lib/server-names.js`, so your botnet reads like a CS syllabus. If the list ever runs dry, the game appends a number (`knuth-0`) and life goes on.
 
 ---

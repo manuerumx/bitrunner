@@ -387,6 +387,12 @@ longer, less responsive cycles. `fit`/`min` control batch **size**: each batch i
 that target and preps/hacks instead. RAM is still the hard limiter.
 
 #### `tools/stasis.js` — Darknet Stasis Links
+
+> New to the darknet? [`docs/DARKNET-QUICKSTART.md`](docs/DARKNET-QUICKSTART.md) is the
+> step-by-step version of this section and the next two, and
+> [`docs/DARKNET-REQUIREMENTS.md`](docs/DARKNET-REQUIREMENTS.md) lists what each command
+> needs before it will work.
+
 ```
 run src/tools/stasis.js                    # status: links vs limit, candidates, skip reasons
 run src/tools/stasis.js auto               # fill every free slot with the best candidates
@@ -406,7 +412,7 @@ Mechanics worth knowing:
 run src/tools/darknet-scan.js              # crawl, update /data/darknet-map.txt, print discoveries
 run src/tools/darknet-scan.js intel        # cracking intel for every uncracked server, shallow first
 ```
-`ns.dnet.probe()` only sees the *current* server's neighbors, so the darknet can only be mapped from within. The scan probes from home, then ships a 1.9 GB probe worker (base 1.6 + probe 0.2 + getServerDetails 0.1) to every known server we can exec on and merges all reports — reports travel back on Port 12 with queue semantics so they can't clobber each other. Each mapped server records its cracking intel: password hint, format and length, required heartbleed charisma, depth, difficulty. Stale map entries are kept — a server that mutated out of view isn't necessarily gone.
+`ns.dnet.probe()` only sees the *current* server's neighbors, so the darknet can only be mapped from within. The scan probes from home, then ships a 1.9 GB probe worker (base 1.6 + probe 0.2 + getServerDetails 0.1) to every known server we can exec on and merges all reports — reports travel back on Port 12 with queue semantics so they can't clobber each other. Each mapped server records its cracking intel: model ID, password hint, format and length, required heartbleed charisma, depth, difficulty. The model ID is the one field the game refuses to document — similar models share vulnerabilities — so `intel` prints it first and crawling accumulates the table for you. Stale map entries are kept — a server that mutated out of view isn't necessarily gone.
 
 Mapped servers flow into `stasis.js` automatically (they show up as `no-password` candidates until cracked). The passwords themselves stay a human job — hints are puzzles by design. The loop is: **scan → read intel → crack → `stasis.js link` → `stasis.js auto` → scan deeper from the newly linked server.**
 

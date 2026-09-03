@@ -228,6 +228,7 @@ function report(from, neighbors) {
 }
 
 const alphaDetails = {
+  modelId: "ZeroLogon",
   depth: 1,
   difficulty: 7,
   hint: "the founder's cat",
@@ -238,6 +239,14 @@ const alphaDetails = {
   isStationary: false,
   isOnline: true,
 };
+
+// modelId is the field that says which vulnerability class a server is in — the one
+// clue the game refuses to document, so it has to survive the trip from the probe
+// worker into the map or the intel readout has nothing actionable to print.
+test("mergeDarknetMap carries modelId through into the map", () => {
+  const { map } = mergeDarknetMap({}, [report("darkweb", { "dn-alpha": alphaDetails })]);
+  assert.equal(map["dn-alpha"].modelId, "ZeroLogon");
+});
 
 test("mergeDarknetMap adds newly discovered hosts and reports them as new", () => {
   const { map, newHosts } = mergeDarknetMap({}, [report("darkweb", { "dn-alpha": alphaDetails })]);
