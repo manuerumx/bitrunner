@@ -91,16 +91,24 @@ export async function main(ns) {
     return;
   }
 
-  // has4SData() is definitive and costs 0.05 GB; the old probe inferred it from whether
-  // getForecast("ECP") threw. tools/market-access.js buys this when the budget allows.
-  const use4S = ns.stock.has4SData();
+  // getForecast() is gated on the 4S Market Data TIX *API*, not on 4S Market Data — those are
+  // two separate purchases and the API is by far the dearer one, so owning the data alone is an
+  // ordinary mid-game state. has4SData() therefore reads true while getForecast() still throws
+  // "You don't have 4S Market Data TIX API Access!", and the whole `if (use4S)` body below is
+  // built on getForecast. Gate on the rung the API actually checks.
+  const use4S = ns.stock.has4SDataTixApi();
   let useShorts = hasShortAccess(ns);
 
   const constants = ns.stock.getConstants();
   COMMISSION = constants.StockMarketCommission;
 
   if (!use4S) {
-    ns.tprint("WARN: No 4S Market Data — trading on price momentum only. Buy 4S with:");
+    // Name the rung that's actually missing. "No 4S Market Data" is misleading to a player who
+    // just bought exactly that and is wondering why nothing changed.
+    ns.tprint(ns.stock.has4SData()
+      ? "WARN: 4S Market Data is owned, but the 4S TIX API is not — forecasts show in the UI and stay unreadable from scripts."
+      : "WARN: No 4S Market Data.");
+    ns.tprint("      Trading on price momentum only. Buy the missing access with:");
     ns.tprint("      run /src/tools/market-access.js");
   }
 
