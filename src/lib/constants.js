@@ -108,9 +108,13 @@ export const DEFAULTS = {
   // Raise it to trade more eagerly at worse prices; set it to Infinity for the old
   // behaviour. See worthOpening in src/lib/market.js.
   stockMinCommissionRatio: 0.01,
-  // Fraction of cash each one-shot buyer may spend per burst; the rest stays liquid for
+  // Fraction of cash program-buyer.js may spend per burst on the NON-port-opener darkweb
+  // extras (Formulas.exe at $5b, DarkscapeNavigator.exe); the rest stays liquid for
   // server-buyer.js and augmentation-buyer.js. See docs/API-COVERAGE-AUDIT.md §5.
-  // Port openers top out around $250m and unblock rooting, so they get a wide budget.
+  // Port openers are deliberately exempt from this cap — they are bought the moment the
+  // balance covers them. They unblock rooting, total ~$287m across all five, and a share
+  // this size refused SQLInject.exe ($250m) on every five-minute burst until the wallet
+  // passed $500m, leaving the 5-port servers unrooted the whole time.
   programBudgetPercent: 0.5,
   // Home RAM gates how many managers the daemon can launch at all (daemon.js refuses any
   // script that doesn't fit), so it competes hard for cash.
