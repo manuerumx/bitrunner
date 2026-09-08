@@ -3,12 +3,20 @@ import { selectProgramsToBuy } from "/src/lib/programs.js";
 import { planPurchases } from "/src/lib/purchasing.js";
 import { formatMoney, tlog } from "/src/lib/utils.js";
 
-// Buys the TOR router and every darkweb program the budget reaches. See
-// docs/API-COVERAGE-AUDIT.md §5.1 — rooter.js can only open as many ports as it has
-// programs, and until now those were bought by hand, so root coverage stalled behind
-// manual shopping.
+// Buys the TOR router, then the darkweb catalogue. See docs/API-COVERAGE-AUDIT.md §5.1 —
+// rooter.js can only open as many ports as it has programs, and until now those were bought
+// by hand, so root coverage stalled behind manual shopping.
 //
-//   run /src/tools/program-buyer.js          buy what the budget allows
+// TWO TIERS, ONE WALLET. Port openers have no budget: every one is bought the moment the
+// balance covers it, because each is a permanent unlock of servers the whole botnet then
+// earns from, and the five together top out around $287m — a rounding error next to what
+// the servers they root return. A budget share here was actively harmful: SQLInject.exe at
+// $250m is 83% of a $300m wallet, so a 50% cap refused it on every five-minute burst and
+// the 5-port servers stayed dark indefinitely. The non-opener extras still spend against
+// DEFAULTS.programBudgetPercent — they unlock subsystems rather than servers, and
+// Formulas.exe alone is $5b, enough to starve server-buyer.js and augmentation-buyer.js.
+//
+//   run /src/tools/program-buyer.js          buy the openers, then what the budget allows
 //   run /src/tools/program-buyer.js dry      report what it would buy, buy nothing
 //
 // ONE-SHOT: does its job and exits. The daemon re-runs it every ~5 min (see MANAGERS
@@ -49,9 +57,12 @@ export async function main(ns) {
   }
 
   // Port openers first (they unblock rooting), then the subsystem unlocks.
-  const catalog = [...PROGRAMS.map((p) => p.name), ...DARKWEB_EXTRAS];
+  const openerNames = PROGRAMS.map((p) => p.name);
+  const catalog = [...openerNames, ...DARKWEB_EXTRAS];
   const owned = catalog.filter((name) => ns.fileExists(name, "home"));
-  const wanted = selectProgramsToBuy(catalog, owned);
+  const wantedOpeners = selectProgramsToBuy(openerNames, owned);
+  const wantedExtras = selectProgramsToBuy(DARKWEB_EXTRAS, owned);
+  const wanted = [...wantedOpeners, ...wantedExtras];
 
   if (wanted.length === 0) {
     tlog(ns, "program-buyer: every darkweb program already owned");
@@ -61,30 +72,50 @@ export async function main(ns) {
   // getDarkwebProgramCost throws for a name this BitNode's darkweb doesn't stock, and
   // returns -1 when it isn't purchasable — planPurchases skips negatives, so an absent
   // DarkscapeNavigator.exe costs us a skipped row rather than a failed run.
-  /** @type {{name: ProgramName, cost: number}[]} */
-  const items = [];
-  for (const name of wanted) {
-    try {
-      items.push({ name, cost: ns.singularity.getDarkwebProgramCost(name) });
-    } catch {
-      // not sold here
+  /** @type {(names: readonly ProgramName[]) => {name: ProgramName, cost: number}[]} */
+  const priceList = (names) => {
+    /** @type {{name: ProgramName, cost: number}[]} */
+    const items = [];
+    for (const name of names) {
+      try {
+        items.push({ name, cost: ns.singularity.getDarkwebProgramCost(name) });
+      } catch {
+        // not sold here
+      }
     }
-  }
+    return items;
+  };
+
+  const openerItems = priceList(wantedOpeners);
+  const extraItems = priceList(wantedExtras);
 
   const money = ns.getPlayer().money;
-  const plan = planPurchases({
-    money,
+  // No reserve: cash is the only ceiling on a port opener.
+  const openerPlan = planPurchases({ money, items: openerItems });
+  // The extras' share is taken from what the openers left. Budgeting both tiers off the same
+  // opening balance is how a run promises more than the wallet holds — the over-commit
+  // planPurchases already guards against within a single list.
+  const extraPlan = planPurchases({
+    money: money - openerPlan.spend,
     reserveFraction: 1 - DEFAULTS.programBudgetPercent,
-    items,
+    items: extraItems,
   });
+  const plan = {
+    buy: [...openerPlan.buy, ...extraPlan.buy],
+    spend: openerPlan.spend + extraPlan.spend,
+  };
 
   if (plan.buy.length === 0) {
-    const cheapest = items.filter((i) => i.cost >= 0).sort((a, b) => a.cost - b.cost)[0];
-    tlog(
-      ns,
-      `program-buyer: ${wanted.length} program(s) left, none within budget` +
-        (cheapest ? ` (cheapest ${cheapest.name} at ${formatMoney(cheapest.cost)})` : "")
-    );
+    const cheapest = (items) => items.filter((i) => i.cost >= 0).sort((a, b) => a.cost - b.cost)[0];
+    // An opener out of reach and an extra held back are different problems with different
+    // fixes — the first needs more income, the second only needs patience.
+    const opener = cheapest(openerItems);
+    const extra = cheapest(extraItems);
+    const detail = opener
+      ? `can't afford the next port opener yet (${opener.name} at ${formatMoney(opener.cost)})`
+      : `holding back${extra ? ` ${extra.name} at ${formatMoney(extra.cost)}` : ""}` +
+        ` — over this run's ${Math.round(DEFAULTS.programBudgetPercent * 100)}% share`;
+    tlog(ns, `program-buyer: ${wanted.length} program(s) left, ${detail}`);
     return;
   }
 
