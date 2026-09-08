@@ -499,7 +499,7 @@ unit-tested `lib/` modules and the `ns`-coupled scripts stay thin — the patter
 | `lib/manager-health.js` | `managerStatus`, `ramVerdict` | daemon status vocabulary; the LOCKED-vs-IDLE split |
 | `lib/purchasing.js` | `spendableMoney`, `planPurchases` | shared budget walk — shopping vs. dependency-ladder semantics |
 | `lib/programs.js` | `selectProgramsToBuy` | darkweb shopping list |
-| `lib/market.js` | `planMarketUnlocks`, `momentumSignal`, `pushSample`, `shouldRealize` | WSE ladder; non-4S trading signal; shared loss tolerance |
+| `lib/market.js` | `planMarketUnlocks`, `momentumSignal`, `pushSample`, `worthTrading`, `worthOpening`, `cashToOpenPosition`, `positionSlice`, `stockBudget`, `fitSharesToBudget`, `rankByConviction`, `portfolioStats` | WSE ladder; non-4S trading signal; entry/exit fee gates; budget chain and its inverse |
 | `lib/sleeves.js` | `planSleeveSpending`, `needsReassignment` | sleeve/memory budget; idempotent task assignment |
 | `lib/corp.js` | `selectMaterialsToSell`, `planBoostPurchases`, `BOOST_MATERIALS` | boost-material hold rule; warehouse-bounded stocking |
 | `lib/darknet.js` (extended) | `planCrackTargets`, `mergeHeartbleedLogs`, `CRACK_WORKER_RAM`, `LOGS_FILE` | Stage A crack targeting and log corpus |
@@ -524,9 +524,11 @@ unit-tested `lib/` modules and the `ns`-coupled scripts stay thin — the patter
   `Parameters<>` (the aliases aren't exported from the `.d.ts`), plus the `CrackReport` port payload.
 - **`advanced/stock-trader.js`** — real `has4SData()`/`getConstants()` probes replace try/catch
   guesswork; commission is read from the game; **the dead non-4S path now trades on momentum**.
-  Both paths share one loss rule (`shouldRealize`): the momentum branch first shipped without
-  the `profit > -MIN_PROFIT` gate the 4S branch has three lines above it, which would have let
-  the *fallback* trader dump on a 2% dip and pay commission twice to realise the loss.
+  Both paths share one dust rule, since superseded: `shouldRealize(profit, minProfit)` held any
+  position underwater by more than two commissions, which — paired with the sell's `forecast < 0.5`
+  gate — refused to exit exactly the stocks the game had just marked as still falling. It is now
+  `worthTrading(gain, commission)`, keeping only the sound half: don't pay the fee twice to trade a
+  position the fee would dominate. See §10 for the matching gate on entries.
 - **`advanced/sleeve-manager.js`** — sleeve count re-read each cycle (was read once, so sleeves
   bought mid-run were never assigned); assignment is idempotent via `getTask()`; buys sleeves
   and memory.
@@ -553,7 +555,9 @@ and `buyMaterial` sets a per-second *rate* that would have kept buying after a o
 3. **Momentum thresholds.** 4%/2% over a 20-sample window is a starting point, not a tuned figure.
    It is intentionally conservative — without a forecast, every position pays commission twice.
    Note the asymmetry is deliberate (exit faster than you enter) but untested against real price
-   series; `shouldRealize` stops it from realising large losses, not from churning small ones.
+   series. The rule named here has since inverted: `shouldRealize` blocked large losses and allowed
+   small churn; `worthTrading` does the reverse, realising large losses and refusing only dust. The
+   entry side is bounded too as of §10 (`worthOpening`).
 4. **`corpBoostTargets` key order is priority order** (documented at both the constant and
    `planBoostPurchases`). The current order suits Agriculture. If a division's dominant
    multiplier is Real Estate, move it to the front or it gets starved on a small warehouse.
@@ -726,3 +730,85 @@ entirely while crime runs.**
   make that moment obvious; automating the faction choice is a separate feature.
 - **Not added to the `MANAGERS` roster.** Crime takes over the player, exactly like
   `tools/grafting.js`. A daemon that silently stops your reputation grind is the wrong default.
+
+---
+
+## 10. Stock entry gate (2026-09-08)
+
+Not an API-coverage gap — no new `ns.stock` function is called. It is a **rule** gap, found from a
+live trading log rather than from the `.d.ts`, and it was costing real money.
+
+### The finding
+
+The operator asked why the trader added only a handful of symbols per cycle while holding a $24b
+portfolio, and reasonably guessed a game-imposed share limit. It was not. Back-solving the logged
+buys — each satisfies `n x price + $100k <= slice < (n+1) x price + $100k` — pins the per-symbol
+slice to `[$606,230, $616,880)`, which inverts through the budget chain to **$1.012b cash**:
+
+```
+cycleBudget = (1.012b - 1b) x 0.25          = $3.06m
+slice       = cycleBudget x 0.2             = $611,555
+```
+
+Two things follow, and neither is a share cap:
+
+1. **Five buys per cycle is structural.** One symbol takes 20% of a budget that starts at 100%, so
+   the ranked loop is exhausted after five full slices. A sixth line is only possible when share
+   granularity leaves a slice underspent.
+2. **The budget tracks *cash*, not portfolio value.** `stockReservedCash` holds $1b back and the
+   trader spends down to it every 6 s, so cash never climbs and the slice never grows. The steady
+   state is a permanently small slice — and against a flat $100k commission that is 21% on entry,
+   **42% for the round trip.** FLCM at $404,220 needed a 49.5% price move to break even.
+
+`worthTrading` had guarded exits against exactly this since the `shouldRealize` rework. Nothing
+guarded entries. That asymmetry is the whole bug.
+
+### Shipped
+
+| Item | Where |
+|---|---|
+| `worthOpening(cost, commission, maxRatio)` | `lib/market.js` — refuses an entry whose fee exceeds `maxRatio` of the position it opens |
+| `cashToOpenPosition({...})` | `lib/market.js` — inverts the budget chain so the report can say *how long* a stall lasts |
+| `POSITION_BUDGET_FRACTION` | moved `stock-trader.js` → `lib/market.js`, so the report sizes the same slice the trader does |
+| `DEFAULTS.stockMinCommissionRatio` | `lib/constants.js`, default `0.01`; `Infinity` restores the old always-buy behaviour |
+| Gate at four sites | `stock-trader.js` — one `break` on the slice, plus a check on each of the three real orders |
+| `wait` action + saving verdict | `stock-report.js`, so a saving trader is not mistaken for a broken one |
+
+**+11 tests** (322 → 333), `npm run check` clean.
+
+### Three decisions worth recording
+
+**A ratio, not a floor.** A flat minimum position would need retuning every BitNode. A ratio binds
+hard while poor and goes silently irrelevant once slices are large, which is also what makes it
+safe on a fresh node.
+
+**The proportional reserve that was asked for would have been the actual wallet-drain.** The
+operator's first instinct was to scale `stockReservedCash` with net worth. Modelled, that inverts
+the protection: `max(0, money - reserve) * percent` is *exactly zero* below a flat floor, whereas a
+percentage always leaves something spendable. At $5m cash a 50% reserve buys **1 share for $20k and
+pays $100k in commission**. The flat floor is a commission-viability gate in disguise, and it
+already adapts in the right direction — as a fraction of cash it shrinks from 200% at $500m to 1%
+at $100b. It was kept exactly as it was.
+
+**Break in the 4S loop, per-symbol check in the momentum loop.** `positionSlice` is bounded by a
+`remaining` that only shrinks, so a slice too small at rank #1 is too small all the way down —
+`break` is sound and skips ~30 needless `ns` calls per cycle. The momentum loop cannot do that: it
+runs the *sells* in the same pass, and breaking early would strand a falling position unsold.
+
+### Measured
+
+```
+cash $1.0122b -> 0 positions; gate opens at $1.202b
+cash $1.25b   -> 5 positions, $62m deployed, 1.61% round-trip drag  (was 42.0%)
+fresh BitNode -> 0 positions at $1m / $5m / $50m / $500m / $999m
+```
+
+Same capital reaches the market; ~26x less of it is burned on commission. The trader becomes a
+pulse trader — save to ~$1.2b, deploy ~$62m across five ~$12.4m positions, repeat.
+
+### Deliberately not done
+
+- **`STOCK_STATUS` port telemetry (F‑41).** Still unpublished. The `wait` state is now worth
+  surfacing on `monitor.js`, which strengthens the case, but it remains a separate feature.
+- **Scaling `POSITION_BUDGET_FRACTION` with conviction.** Ranking already decides *order*; letting
+  it decide *size* too would re-open the concentration failure F‑40/F‑37 were fixed to close.

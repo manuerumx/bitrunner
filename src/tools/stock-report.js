@@ -2,7 +2,12 @@ import { DEFAULTS } from "/src/lib/constants.js";
 import {
   FORECAST_BUY_THRESHOLD,
   FORECAST_SELL_THRESHOLD,
+  POSITION_BUDGET_FRACTION,
+  cashToOpenPosition,
   portfolioStats,
+  positionSlice,
+  stockBudget,
+  worthOpening,
   worthTrading,
 } from "/src/lib/market.js";
 import { formatMoney } from "/src/lib/utils.js";
@@ -43,6 +48,22 @@ export async function main(ns) {
   const money = ns.getPlayer().money;
   const reserve = DEFAULTS.stockReservedCash;
 
+  // The best slice any symbol can get this cycle: positionSlice() is bounded by a
+  // `remaining` that only shrinks, so the first symbol on the ranked list sees the largest
+  // one. If a fee-worthy position will not fit in that, no symbol gets bought at all — and
+  // the ACTION column must say so rather than promising a BUY the trader will refuse.
+  const cycleBudget = stockBudget({ money, reserve, percent: DEFAULTS.stockBudgetPercent });
+  const bestSlice = positionSlice({ remaining: cycleBudget, cycleBudget, fraction: POSITION_BUDGET_FRACTION });
+  const canOpen = worthOpening(bestSlice, commission, DEFAULTS.stockMinCommissionRatio);
+  // Reported so a stalled trader reads as "saving up to $X" instead of as a malfunction.
+  const cashToTrade = cashToOpenPosition({
+    reserve,
+    commission,
+    maxRatio: DEFAULTS.stockMinCommissionRatio,
+    percent: DEFAULTS.stockBudgetPercent,
+    fraction: POSITION_BUDGET_FRACTION,
+  });
+
   let capacity = 0; // what the market would let you hold, at today's prices
   let underfilled = 0; // bullish symbols the trader has room to buy more of
   const rows = [];
@@ -72,7 +93,7 @@ export async function main(ns) {
     // imported now, rather than re-declared here under a comment claiming they were.
     let action = "";
     if (use4S && forecast > FORECAST_BUY_THRESHOLD && longShares < maxShares) {
-      action = longShares > 0 ? "ADD" : "BUY";
+      action = canOpen ? (longShares > 0 ? "ADD" : "BUY") : "wait";
       underfilled++;
     } else if (use4S && longShares > 0 && forecast < FORECAST_SELL_THRESHOLD) {
       action = worthTrading(longGain, commission) ? "SELL" : "dust";
@@ -120,6 +141,12 @@ export async function main(ns) {
       `   (${positions.length} position${positions.length === 1 ? "" : "s"})`,
   );
   ns.print(`Buyable now         ${underfilled} symbols are bullish with room left to fill`);
+  ns.print(
+    canOpen
+      ? `Entry size          ${formatMoney(bestSlice)} per symbol this cycle   (fee is ${((commission / (bestSlice - commission)) * 100).toFixed(1)}% of it)`
+      : `Entry size          too small — ${formatMoney(bestSlice)} per symbol would pay ${formatMoney(commission)} in fees.` +
+          ` Saving until cash reaches ${formatMoney(cashToTrade)}`,
+  );
   ns.print("");
   // Market capacity is a ceiling on a single position, not a target for the portfolio, so
   // it is reported as context and never compared against what is held.
@@ -132,6 +159,10 @@ export async function main(ns) {
   let verdict;
   if (stats.investable <= 0) {
     verdict = "no capital in play — nothing to judge";
+  } else if (!canOpen && underfilled > 0) {
+    // Ahead of the under-invested branch on purpose: idle cash with bullish symbols is the
+    // exact shape of that failure, and while the gate is shut it is the intended state.
+    verdict = `saving — entries cost ${formatMoney(commission)} in fees; holding until cash reaches ${formatMoney(cashToTrade)}`;
   } else if (stats.deployed < 0.5 && underfilled > 0) {
     verdict = `under-invested — ${formatMoney(stats.investable - stats.held)} idle with ${underfilled} bullish symbols to buy`;
   } else if (positions.length > 0 && stats.concentration > 0.5) {

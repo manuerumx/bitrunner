@@ -2,12 +2,14 @@ import { DEFAULTS } from "/src/lib/constants.js";
 import {
   FORECAST_BUY_THRESHOLD,
   FORECAST_SELL_THRESHOLD,
+  POSITION_BUDGET_FRACTION,
   fitSharesToBudget,
   momentumSignal,
   positionSlice,
   pushSample,
   rankByConviction,
   stockBudget,
+  worthOpening,
   worthTrading,
 } from "/src/lib/market.js";
 import { log, formatMoney } from "/src/lib/utils.js";
@@ -15,15 +17,6 @@ import { log, formatMoney } from "/src/lib/utils.js";
 // ns.stock.getConstants() is 0 GB and reports the real commission, so it no longer has to
 // be hardcoded. Read once at startup — it is a game constant, not a live figure.
 let COMMISSION = 100000;
-
-// Cap on how much of one cycle's budget a single symbol may take, so the ranked list gets
-// funded rather than just its head. Without it both `wanted` and fitSharesToBudget sized
-// against the whole `remaining`, the top-ranked symbol spent all of it, and the loop broke
-// one iteration later — one symbol funded per cycle, and the same one each cycle, because
-// 4S forecasts barely move between ticks. A live portfolio sat 100% in FLCM with fifteen
-// other bullish symbols unfunded. It applies to blind momentum trading for the second
-// reason too: with no forecast to justify concentrating, spread thin.
-const POSITION_BUDGET_FRACTION = 0.2;
 
 // Fallback trading, used only when 4S market data isn't owned. Without a forecast the
 // only signal is observed price history, so the bar is deliberately higher: a position
@@ -174,14 +167,19 @@ export async function main(ns) {
       const ranked = rankByConviction(symbols, (sym) => forecasts.get(sym) ?? 0.5);
 
       for (const sym of ranked) {
-        if (remaining <= COMMISSION * 2) break;
+        // positionSlice() is bounded by `remaining`, which only ever shrinks, so once the
+        // best slice on offer is too small to open a position worth the fee it is too
+        // small for every symbol further down the ranking — break rather than continue.
+        // This replaces a bare `remaining <= COMMISSION * 2` check, which only refused
+        // orders that were literally unaffordable, not the merely uneconomic ones.
+        // One slice per symbol: a symbol is either bullish enough to buy or bearish enough
+        // to short, never both, so the two branches below cannot double-spend it.
+        const slice = positionSlice({ remaining, cycleBudget, fraction: POSITION_BUDGET_FRACTION });
+        if (!worthOpening(slice, COMMISSION, DEFAULTS.stockMinCommissionRatio)) break;
 
         const forecast = forecasts.get(sym) ?? 0;
         const maxShares = ns.stock.getMaxShares(sym);
         const [longShares, , shortShares] = ns.stock.getPosition(sym);
-        // One slice per symbol: a symbol is either bullish enough to buy or bearish enough
-        // to short, never both, so the two branches below cannot double-spend it.
-        const slice = positionSlice({ remaining, cycleBudget, fraction: POSITION_BUDGET_FRACTION });
 
         // `longShares < maxShares` rather than `=== 0`: a position used to be sized once,
         // against whatever cash was on hand the cycle it opened, and never added to again.
@@ -197,8 +195,12 @@ export async function main(ns) {
             budget: slice,
             costOf: (n) => ns.stock.getPurchaseCost(sym, n, "L"),
           });
-          if (shares > 0) {
-            const cost = ns.stock.getPurchaseCost(sym, shares, "L");
+          const cost = shares > 0 ? ns.stock.getPurchaseCost(sym, shares, "L") : 0;
+          // The slice check above bounds the best case; share granularity can leave the real
+          // order far under it — FLCM at $202k/share fits only 2 shares in a $610k slice, so
+          // the flat fee lands on $404k of stock rather than the $510k the slice allowed.
+          // Gate the order actually being placed, not the budget it was sized against.
+          if (shares > 0 && worthOpening(cost, COMMISSION, DEFAULTS.stockMinCommissionRatio)) {
             const price = ns.stock.buyStock(sym, shares);
             if (price > 0) {
               remaining -= cost;
@@ -222,8 +224,9 @@ export async function main(ns) {
             budget: slice,
             costOf: (n) => ns.stock.getPurchaseCost(sym, n, "S"),
           });
-          if (shares > 0) {
-            const cost = ns.stock.getPurchaseCost(sym, shares, "S");
+          const cost = shares > 0 ? ns.stock.getPurchaseCost(sym, shares, "S") : 0;
+          // Same entry gate as the long branch: a short pays the fee on the way in too.
+          if (shares > 0 && worthOpening(cost, COMMISSION, DEFAULTS.stockMinCommissionRatio)) {
             try {
               const price = ns.stock.buyShort(sym, shares);
               if (price > 0) {
@@ -279,8 +282,12 @@ export async function main(ns) {
             budget: slice,
             costOf: (n) => ns.stock.getPurchaseCost(sym, n, "L"),
           });
-          if (shares > 0) {
-            const cost = ns.stock.getPurchaseCost(sym, shares, "L");
+          const cost = shares > 0 ? ns.stock.getPurchaseCost(sym, shares, "L") : 0;
+          // Gated like the 4S path, and with more reason: momentum has no forecast to say
+          // when to exit, so a fee-heavy entry has nothing arguing it back into profit.
+          // Checked per symbol rather than breaking the loop — this loop also runs the
+          // sells, and breaking early would strand a falling position unsold.
+          if (shares > 0 && worthOpening(cost, COMMISSION, DEFAULTS.stockMinCommissionRatio)) {
             if (ns.stock.buyStock(sym, shares) > 0) {
               remaining -= cost;
               log(ns, `${longShares > 0 ? "ADD" : "BUY"} LONG ${sym}: ${shares} shares (momentum)`);

@@ -9,6 +9,8 @@ import {
   pushSample,
   rankByConviction,
   stockBudget,
+  cashToOpenPosition,
+  worthOpening,
   worthTrading,
 } from "/src/lib/market.js";
 
@@ -41,6 +43,105 @@ test("worthTrading trades a large position that is deeply underwater", () => {
 
 test("worthTrading holds at exactly the round-trip boundary", () => {
   assert.equal(worthTrading(200_000, 100_000), false);
+});
+
+// ── worthOpening ────────────────────────────────────────────────────────────
+//
+// worthTrading guards the EXIT; nothing guarded the entry. That asymmetry is what pinned a
+// live run to $500k positions: the flat $1b reserve means the trader spends cash down to
+// the floor every 6 s, so cash never climbs far above $1b, so the per-symbol slice stays
+// at 5% of a tiny surplus. Every buy then paid a $100k commission on ~$500k of stock —
+// 20% on entry, 40% round trip, i.e. a position needing a 40% price move to break even.
+//
+// The gate is a ratio rather than a flat floor so it needs no retuning per BitNode: it
+// binds hard when poor, and is silently irrelevant once slices are large. Refusing the buy
+// leaves the cash unspent, so the surplus compounds across cycles until one worthwhile
+// entry is affordable instead of many value-destroying ones.
+//
+// `cost` is getPurchaseCost(), which per NetscriptDefinitions.d.ts already includes the
+// commission — so the position actually bought is cost - commission.
+
+test("worthOpening opens a position the commission barely dents", () => {
+  // $20m of stock for a $100k fee: 0.5%. Noise.
+  assert.equal(worthOpening(20_100_000, 100_000, 0.01), true);
+});
+
+test("worthOpening refuses the $500k dribble that a pinned budget produces", () => {
+  // The live MGCP buy: 23 shares at $22.01k plus the fee. $100k on $506,230 is 19.8% on
+  // entry — the trade needs a ~40% round-trip move just to break even.
+  assert.equal(worthOpening(606_230, 100_000, 0.01), false);
+});
+
+test("worthOpening opens at exactly the ratio boundary", () => {
+  // $10m position, $100k fee, ratio 0.01 — the fee is exactly the budgeted 1%, which the
+  // rule permits. Stated as a test because "at most 1%" has to pick a side of the line.
+  assert.equal(worthOpening(10_100_000, 100_000, 0.01), true);
+});
+
+test("worthOpening refuses an order that is nothing but commission", () => {
+  // fitSharesToBudget can shrink an order until the stock is a rounding error next to the
+  // fee. cost <= commission means the position is worth zero or less.
+  assert.equal(worthOpening(100_000, 100_000, 0.01), false);
+});
+
+test("worthOpening refuses a non-positive cost", () => {
+  assert.equal(worthOpening(0, 100_000, 0.01), false);
+});
+
+test("worthOpening opens anything when the game charges no commission", () => {
+  // Guards against a divide-by-zero style trap: with no fee there is no reason to wait.
+  assert.equal(worthOpening(5_000, 0, 0.01), true);
+});
+
+// ── cashToOpenPosition ──────────────────────────────────────────────────────
+//
+// worthOpening() can stall the trader for many cycles by design, which looks identical to
+// a broken script from the outside. stock-report.js answers "how long?" by inverting the
+// budget chain — slice = (cash - reserve) * percent * fraction — against the smallest
+// position whose fee clears the ratio. Derived arithmetic that would drift silently if any
+// of the four inputs changed, so it lives next to the rule it inverts.
+
+test("cashToOpenPosition inverts the budget chain back to a cash figure", () => {
+  // The live configuration: $1b reserve, 25% of surplus per cycle, 20% of that per symbol,
+  // $100k fee, 1% ratio. Needs a $10.1m slice, which is 5% of the surplus → $202m surplus.
+  const cash = cashToOpenPosition({
+    reserve: 1_000_000_000, commission: 100_000, maxRatio: 0.01, percent: 0.25, fraction: 0.2,
+  });
+  assert.equal(cash, 1_202_000_000);
+});
+
+test("cashToOpenPosition returns a figure that actually opens the gate", () => {
+  // The inverse is only useful if it round-trips through the rule it inverts.
+  const args = { reserve: 1_000_000_000, commission: 100_000, maxRatio: 0.01, percent: 0.25, fraction: 0.2 };
+  const cash = cashToOpenPosition(args);
+  const slice = (cash - args.reserve) * args.percent * args.fraction;
+  assert.equal(worthOpening(slice, args.commission, args.maxRatio), true);
+});
+
+test("cashToOpenPosition sits exactly on the boundary, not past it", () => {
+  // One dollar less must still be refused, or the report tells the player to save too much.
+  const args = { reserve: 1_000_000_000, commission: 100_000, maxRatio: 0.01, percent: 0.25, fraction: 0.2 };
+  const slice = (cashToOpenPosition(args) - 1 - args.reserve) * args.percent * args.fraction;
+  assert.equal(worthOpening(slice, args.commission, args.maxRatio), false);
+});
+
+test("cashToOpenPosition asks for less cash as the ratio is loosened", () => {
+  // The monotonicity a player relies on when tuning stockMinCommissionRatio: a laxer gate
+  // must never demand a bigger balance. Guards against an inverted term in the algebra.
+  const base = { reserve: 1_000_000_000, commission: 100_000, percent: 0.25, fraction: 0.2 };
+  const strict = cashToOpenPosition({ ...base, maxRatio: 0.005 });
+  const loose = cashToOpenPosition({ ...base, maxRatio: 0.05 });
+  assert.ok(strict > loose, `expected ${strict} > ${loose}`);
+});
+
+test("cashToOpenPosition still requires the fee itself when the ratio is disabled", () => {
+  // maxRatio Infinity is the escape hatch back to the old always-buy behaviour. The ratio
+  // stops binding, but a slice below the commission still buys a zero-sized position, so
+  // the floor is what it takes to afford the fee — not the bare reserve.
+  assert.equal(
+    cashToOpenPosition({ reserve: 5_000_000, commission: 100_000, maxRatio: Infinity, percent: 0.25, fraction: 0.2 }),
+    5_000_000 + 2_000_000,
+  );
 });
 
 // ── fitSharesToBudget ───────────────────────────────────────────────────────

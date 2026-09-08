@@ -58,6 +58,12 @@ export function planMarketUnlocks({ has, costs, money, reserveFraction = 0 }) {
 export const FORECAST_BUY_THRESHOLD = 0.55;
 export const FORECAST_SELL_THRESHOLD = 0.5;
 
+// Cap on how much of one cycle's budget a single symbol may take, so the ranked list gets
+// funded rather than just its head. Lives here rather than in stock-trader.js because
+// stock-report.js has to size the same slice to predict the trader's next move; a private
+// copy in the trader is exactly the drift the thresholds above were consolidated to stop.
+export const POSITION_BUDGET_FRACTION = 0.2;
+
 /**
  * How much of the cycle budget one symbol may take.
  *
@@ -141,6 +147,59 @@ export function portfolioStats({ positions, cash, reserve }) {
  */
 export function worthTrading(gain, commission) {
   return gain > commission * 2;
+}
+
+/**
+ * Is this entry big enough to be worth paying the commission to open?
+ *
+ * worthTrading() guards the exit; nothing guarded the entry, and the asymmetry cost real
+ * money. The flat `stockReservedCash` floor means the trader spends cash down to the
+ * reserve every 6 s, so cash never climbs far above it, so positionSlice() keeps handing
+ * out 5% of a permanently small surplus. A live $24b portfolio was opening ~$500k
+ * positions against a $100k commission: 20% on entry, 40% for the round trip — a trade
+ * that needs a 40% price move just to break even.
+ *
+ * Expressed as a ratio rather than a flat floor so it never needs retuning: it binds hard
+ * while poor and goes silently irrelevant once slices are large, which is also why it is
+ * safe on a fresh BitNode. Refusing the buy leaves the cash unspent, so the surplus
+ * compounds across cycles until one worthwhile entry is affordable instead of a dozen
+ * value-destroying ones — the buy-side mirror of the dust filter on sells.
+ *
+ * @param {number} cost       ns.stock.getPurchaseCost() — total outlay, commission included
+ * @param {number} commission one commission; the round trip costs two
+ * @param {number} maxRatio   largest commission-to-position ratio worth accepting
+ */
+export function worthOpening(cost, commission, maxRatio) {
+  // getPurchaseCost() bundles the fee in, so the stock actually acquired is the remainder.
+  // fitSharesToBudget can shrink an order until that remainder is zero or negative.
+  const position = cost - commission;
+  if (!(position > 0)) return false;
+  return commission <= position * maxRatio;
+}
+
+/**
+ * Cash at which worthOpening() starts letting the trader in.
+ *
+ * The gate is allowed to stall the trader for many cycles, which from the outside looks
+ * exactly like a broken script — the question this answers is "how long?". Inverts the
+ * budget chain, slice = (cash - reserve) * percent * fraction, against the smallest
+ * position whose fee clears `maxRatio`, so stock-report.js can say "saving until $X"
+ * instead of leaving a stalled trader unexplained.
+ *
+ * Derived arithmetic over four inputs that live in three files, so it belongs next to the
+ * rule it inverts rather than inline in the report.
+ *
+ * @param {{reserve: number, commission: number, maxRatio: number,
+ *   percent: number, fraction: number}} input
+ * @returns {number} cash at which the first symbol of a cycle becomes buyable
+ */
+export function cashToOpenPosition({ reserve, commission, maxRatio, percent, fraction }) {
+  // commission / maxRatio is the position the fee is exactly `maxRatio` of; the slice has
+  // to cover the fee on top, since getPurchaseCost() bundles it in. With maxRatio at
+  // Infinity the first term vanishes and this degrades to "enough to afford the fee",
+  // which is the floor the zero-position check in worthOpening still imposes.
+  const minSlice = commission / maxRatio + commission;
+  return reserve + minSlice / (percent * fraction);
 }
 
 /**

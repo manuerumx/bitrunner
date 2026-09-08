@@ -99,6 +99,15 @@ export const DEFAULTS = {
   // minutes and starves the hacknet/server/aug buyers, which poll far less often. Raise it
   // if you are saving for a big purchase; set it to 0 to let the trader take everything.
   stockReservedCash: 1e9,
+  // Largest share of a new position the commission may be, before the trader refuses to
+  // open it. The reserve above keeps cash pinned near its floor, so the per-symbol slice
+  // stays small and a flat $100k fee was eating 20% of every entry (40% round trip) — a
+  // $24b portfolio opening $500k positions. Refusing lets the surplus compound across
+  // cycles into one worthwhile entry instead of a dozen value-destroying ones. A ratio,
+  // so it binds hard when poor and is irrelevant when rich; no per-BitNode retuning.
+  // Raise it to trade more eagerly at worse prices; set it to Infinity for the old
+  // behaviour. See worthOpening in src/lib/market.js.
+  stockMinCommissionRatio: 0.01,
   // Fraction of cash each one-shot buyer may spend per burst; the rest stays liquid for
   // server-buyer.js and augmentation-buyer.js. See docs/API-COVERAGE-AUDIT.md §5.
   // Port openers top out around $250m and unblock rooting, so they get a wide budget.

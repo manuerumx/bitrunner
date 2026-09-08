@@ -59,6 +59,12 @@ not "fixed" by mistake).
 >   **Contract heartbeat (F‑28)** — logs `N found / solved / failed / skipped` every cycle (was
 >   silent unless something solved/failed) and the scan interval dropped 300s→60s.
 >
+> - **Batch 7 — commission drag from live logs:** **F‑51** — the trader had no entry gate, so with cash pinned
+>   near the `stockReservedCash` floor it opened ~$500k positions against a $100k fee (42 % round trip) and its
+>   five-buys-per-cycle ceiling read to the operator as a share limit. `worthOpening` now refuses any entry the fee
+>   would dominate and lets cash compound into one worthwhile position instead — 42 % → 1.6 % measured drag.
+>   `stock-report.js` reports the wait (`cashToOpenPosition`) so saving is distinguishable from breakage.
+>
 > All touched files pass `node --check`. Verify in‑game: daemon "Botnet used%" should climb,
 > `ns.ps` on purchased servers should show `share.js`, hacknet should buy nodes, and the
 > contract tail should heartbeat each minute. **Note:** `share()` only runs while a faction is
@@ -353,7 +359,8 @@ by adversarial verification (see §7), blank = not separately verified (lower‑
 ### Advanced — economy (`stock-trader`, `faction-manager`, `augmentation-buyer`)
 | # | Sev | Cat | Finding | Fix |
 |---|---|---|---|---|
-| F‑37 | 🟡 | efficiency | **Stock budget recomputed per‑symbol, not decremented** — the first few strong symbols can each spend the full 25 %, defeating the per‑cycle cap and draining cash you may want liquid. | Track a running `remaining` and subtract each buy. |
+| F‑37 | ✅ | efficiency | ~~**Stock budget recomputed per‑symbol, not decremented** — the first few strong symbols can each spend the full 25 %, defeating the per‑cycle cap and draining cash you may want liquid.~~ **Resolved,** but the decrement alone was only half of it: nothing stopped the *first* taker emptying `remaining`, so one symbol was funded per cycle and — 4S forecasts barely moving between ticks — the same one each time. A live portfolio sat 100 % in FLCM. | Done — running `remaining`, plus `positionSlice` capping any one symbol at `POSITION_BUDGET_FRACTION` of the cycle budget. |
+| F‑51 | ✅ | efficiency | **No entry gate on buys — the trader traded itself broke on commission.** `worthTrading` guarded exits; nothing guarded entries. `stockReservedCash` pins cash near its $1b floor, so `positionSlice` kept handing out 5% of a small surplus: a live $24b portfolio opened **$500k positions against a $100k fee** — 21% on entry, 42% round trip, a trade needing a 42% move to break even. Five buys per cycle is also structural (20% slice out of a 100% budget), which reads as a share limit and is not one. | Done — `worthOpening` in `lib/market.js` skips any entry whose fee exceeds `DEFAULTS.stockMinCommissionRatio` of the position; cash then compounds across cycles into one worthwhile entry. Measured 42% → 1.6% round-trip drag. `cashToOpenPosition` lets `stock-report.js` say how long the wait is, so a saving trader can't be mistaken for a broken one. |
 | F‑38 | 🟡 | efficiency | `faction-manager` goes **idle once the top faction's rep target is met** instead of advancing to the next faction with reachable augs. | Exclude maxed factions; re‑pick next‑best; only idle when none remain. |
 | F‑44 | 🟡 | ram‑dist | Singularity/Stock‑heavy always‑on managers inflate **home static RAM**, shrinking home's botnet contribution. | Keep lean; consider running them on a small purchased server; ensure `reservedHomeRAM` covers them. |
 | F‑39 | ⚪ | correctness | `getPortfolio` reports short positions at cost basis, not market value (cosmetic; affects no decision). | Use ask price, or label the metric. |

@@ -68,6 +68,7 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 | `run src/tools/ram-report.js api` | `api` | — | Per-function RAM as the game actually charges it (`getFunctionRamCost`, 0 GB). Settles whether corporation calls really cost 20 GB each. |
 | `run src/tools/program-buyer.js dry` | `dry` | SF-4 + TOR | Reports which darkweb programs it would buy and for how much. Buys nothing. |
 | `run src/tools/market-access.js dry` | `dry` | — | Reports the next World Stock Exchange unlock it would buy (WSE → TIX → 4S → 4S TIX). Buys nothing. |
+| `run src/tools/stock-report.js` | none | WSE + TIX | Portfolio against the capital that can actually reach it: held vs. capacity, deployment, concentration, and what the trader will do with each symbol next cycle. **Start here if the trader looks idle** — it says whether it is saving toward a fee-worthy entry, and names the figure. Trades nothing. |
 | `run src/tools/corp-boost.js dry` | `dry` | SF-3 | Reports the boost materials it would stock per division/city. Buys nothing. |
 | `run src/tools/darknet-scan.js crack` | `crack` | Darknet | Heartbleeds every reachable uncracked darknet server and stores the captured logs. **Read-only** — see below. |
 | `run src/tools/grafting.js` | none | SF-10 | Lists augmentations you can graft right now. Grafting needs **money only — no faction reputation.** |
@@ -176,7 +177,7 @@ You *can* launch a single manager by hand for testing (e.g. `run src/advanced/st
 | `market-access.js` (auto) | No Source File — buys WSE/TIX/4S itself |
 | `corp-boost.js` (auto) | SF-3 / BitNode 3 |
 | `darknet-scan.js crack` | Darknet access (`DarkscapeNavigator.exe`) + charisma |
-| `stock-trader.js` (auto) | WSE + TIX API (shorts need SF-8); trades on momentum without 4S |
+| `stock-trader.js` (auto) | WSE + TIX API (shorts need SF-8); trades on momentum without 4S. Skips entries where the commission would exceed `stockMinCommissionRatio` of the position, saving across cycles instead — so idle spells are normal; `stock-report.js` says why |
 | `faction-manager.js` (auto) | SF-4 |
 | `gang-manager.js` (auto) | SF-2 / BitNode 2 |
 | `corp-manager.js` (auto) | SF-3 / BitNode 3 |

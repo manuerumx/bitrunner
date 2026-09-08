@@ -209,6 +209,10 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 - **Requires**: WSE Account + TIX API Access (~$30B total investment)
 - **Cycle**: Every 6 seconds (matches stock price update frequency)
 - **Strategy with 4S data**: Buys stocks with forecast >55%, sells when forecast drops below 50%. Commission-aware — the commission now comes from `ns.stock.getConstants()` (0 GB) instead of a hardcoded $100K.
+- **Entry gate**: A buy is skipped unless the commission is at most `stockMinCommissionRatio` (1%) of the position it opens. The trader then *saves* — cash accumulates across cycles until one worthwhile entry is affordable.
+  > Without this the trader traded itself broke on fees. `stockReservedCash` pins cash near its $1b floor, so the per-symbol slice stays at 5% of a small surplus; a live $24b portfolio was opening **$500k positions against a $100k fee** — 21% on entry, 42% round trip, i.e. a trade needing a 42% price move to break even. Gating turns that into ~$12m positions at 1.6% round trip. A ratio rather than a flat floor, so it binds hard when poor, goes irrelevant when rich, and never needs retuning per BitNode.
+  >
+  > **A quiet trader is usually this, not a bug.** `stock-report.js` shows `wait` in its NEXT column and names the cash figure it is saving toward.
 - **Strategy without 4S**: Momentum. It keeps a bounded 20-sample price history per symbol and trades only on a ≥4% rise or ≥2% fall, and only once it has 12 samples — so the first ~72 s after a restart it deliberately does nothing rather than trade blind. Positions are capped at 20% of the cycle budget.
   > Before this, the trader's entire buy/sell body sat inside `if (use4S)`. Without 4S data it looped forever at 6 s, read prices, and never placed a single trade.
 - **Access**: `tools/market-access.js` buys the WSE → TIX → 4S → 4S TIX ladder for it. The `hasTixApiAccess()` / `has4SData()` probes (0.05 GB each) replaced try/catch guesswork.
@@ -800,6 +804,8 @@ ns.writePort(5, JSON.stringify({
 | `hacknetBudgetPercent` | 0.1 | Max fraction of money to spend on hacknet per cycle |
 | `hashTargetUpgradesPerCycle` | 2 | Max purchases per cycle of each targeted hash upgrade (rest drained to money) |
 | `stockBudgetPercent` | 0.25 | Max fraction of money to invest in stocks per cycle |
+| `stockReservedCash` | 1e9 | Cash the stock trader will never touch. Also what keeps it dormant on a fresh BitNode — the budget is `max(0, money - reserve) * percent`, so it is exactly zero below the floor |
+| `stockMinCommissionRatio` | 0.01 | Largest share of a new position the commission may be. Raise it to trade more eagerly at worse prices; `Infinity` restores the old always-buy behaviour |
 | `batchSpacingMs` | 200 | Milliseconds between HWGW batch landing times |
 | `hwgwBatchWaves` | 4 | HWGW pipeline depth multiplier per target (tune with `hwgw-tune.js`) |
 | `hwgwMaxBatches` | 500 | Hard cap on HWGW batches per target per cycle |
@@ -815,6 +821,7 @@ ns.writePort(5, JSON.stringify({
 - **Aggressive hacking**: Raise the `hackPercent` ceiling to 0.9 (more money per batch — but see "Batch sizing" below: it only takes effect if the batch fits)
 - **Conservative hacking**: Set `hackPercent` to 0.1 (less money per batch, but very stable — good for stock manipulation)
 - **Stock-aware hacking**: Set `hackPercent` low when stock-trader is active to minimize market disruption
+- **Stock trader too passive**: Raise `stockMinCommissionRatio` (say 0.05) to accept fee-heavier entries, or lower `stockReservedCash` to free up surplus. Both make the per-symbol slice clear the gate sooner — at the cost of paying more of each position to the exchange
 - **Nothing dispatching on a rich target**: that's a sizing problem, not a RAM leak — see "Batch sizing" below and `hwgw-tune.js fit` / `min`
 
 ---
@@ -845,6 +852,20 @@ This makes the coordinator weaken-spam the best EXP/sec server with all leftover
 
 ### Stock trader exits immediately
 You need to purchase WSE Account and TIX API Access from the World Stock Exchange in-game. Total cost is approximately $30B.
+
+### Stock trader is running but buys nothing (or only 2-3 symbols)
+Usually the entry gate doing its job, not a fault. Run:
+```
+run src/tools/stock-report.js
+```
+The NEXT column shows `wait` while the gate is shut, and the summary names the cash figure it is saving toward — `saving — entries cost $100k in fees; holding until cash reaches $1.202b`.
+
+Two things bound how much it buys per cycle, and neither is a limit on available shares:
+
+- **At most 5 buys per cycle, structurally.** One symbol may take 20% of the cycle budget, and the cycle starts with 100% of it — so after five full slices there is nothing left.
+- **The budget is a slice of your *cash*, not your portfolio.** It is `(cash - $1b) x 25%`, then 20% of that per symbol — so 5% of whatever sits above the reserve. A $24b portfolio with $1.01b cash has only ~$12m in play.
+
+If you genuinely want it more aggressive, see the tuning tips above. `ns.stock.getMaxShares()` *is* a real per-symbol cap the trader respects, but it rarely binds before your wallet does.
 
 ### Advanced scripts exit with "API required" message
 These require specific Source Files. You unlock them by completing BitNodes:
