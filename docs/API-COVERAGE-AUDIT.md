@@ -78,7 +78,7 @@ No `const { ... } = ns` destructuring exists anywhere in `src/`, so no aliasing 
 | `ns.grafting` | **0 / 5** | 5 | Entire subsystem unautomated. |
 | `ns.stanek` | **0 / 11** | 0* | Unreachable without the Stanek gift (BN13 / SF13). |
 | `ns.formulas` | **0 / 3** | 3 | Sub-namespaces (`hacking`, `work`, `gang`, `dnet`, hacknet) entirely unused. |
-| `ns.infiltration` | **0 / 2** | 0 | Read-only; infiltration itself is not scriptable. |
+| `ns.infiltration` | **0 / 2** | 0 | Read-only, and the game actively blocks automating the rest — see [INFILTRATION.md](INFILTRATION.md). |
 | `ns.ui` | **1 / 17** | 0 | Cosmetic. `openTail` is the only one worth having. |
 | `ns.format` | **0 / 4** | 0 | Superseded by `lib/utils.js` (`formatMoney`/`formatRAM`/`formatTime`). |
 
@@ -133,7 +133,9 @@ referenced), because that is what `daemon.js:18-22` gates on.
 (run-ending, must stay manual — same reasoning that keeps `augmentation-buyer.js` manual),
 `createDummyContract`, `dnet.labreport`/`labradar` (easter eggs), `dnet.unleashStormSeed` (the
 `.d.ts` calls it "catastrophic damage"), `gang.createGang`/`corporation.createCorporation`
-(irreversible faction/BN commitments — keep manual), `ns.infiltration.*` (read-only).
+(irreversible faction/BN commitments — keep manual), `ns.infiltration.*` (read-only — and the
+minigames are guarded against synthetic key events, which hospitalize the player on contact;
+[INFILTRATION.md](INFILTRATION.md) has the evidence).
 
 ---
 
