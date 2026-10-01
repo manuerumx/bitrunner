@@ -510,7 +510,7 @@ unit-tested `lib/` modules and the `ns`-coupled scripts stay thin — the patter
 
 | Script | Item | RAM | Notes |
 |---|---|---|---|
-| `tools/program-buyer.js` | §5.1 | 74.25 / 20.25 / 6.75 GB | one-shot; `hasTorRouter` gate, cheapest-first, tolerates programs this BitNode doesn't stock |
+| `tools/program-buyer.js` | §5.1 | 74.25 / 20.25 / 6.75 GB | one-shot; `hasTorRouter` gate, cheapest-first, tolerates programs this BitNode doesn't stock; port openers unbudgeted, extras capped at `programBudgetPercent` of what they leave |
 | `tools/home-upgrader.js` | §5.3 | 50.15 / 14.15 / 5.15 GB | one-shot; no cost probe (saves 24 GB at SF4.1), spend tracked off the wallet |
 | `tools/market-access.js` | §5.4 | 12.3 GB | one-shot; prices from `getConstants()` (0 GB), ladder semantics |
 | `tools/corp-boost.js` | §5.5 | see caveat | one-shot; `bulkPurchase` not `buyMaterial`, MarketTA2 enabled |
