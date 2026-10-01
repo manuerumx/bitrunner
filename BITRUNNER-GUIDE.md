@@ -103,6 +103,7 @@ src/
     ├── backdoor.js, backdoor-next.js, reset-prep.js
     ├── list-augs.js                             ← augmentation catalog (SF-4)
     ├── hwgw-tune.js, xp-farm.js, share-idle.js  ← runtime config toggles
+    ├── gang-train.js                            ← force every gang member to train
     ├── manager-toggle.js                        ← enable/disable daemon managers
     ├── ram-report.js                             ← per-manager / per-function RAM audit
     ├── program-buyer.js, home-upgrader.js        ← one-shot buyers (SF-4)
@@ -231,10 +232,41 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 #### `advanced/gang-manager.js` — Gang Operations
 - **Requires**: Source-File 2 (or BitNode 2), gang must be created first
 - **Cycle**: Every 10 seconds
-- **What it does**: Recruits members, assigns tasks, buys equipment, ascends members when multiplier gain ≥1.5x, manages territory warfare (enables when win chance >55%).
+- **What it does**: Recruits members, assigns tasks, buys equipment, ascends members when the multipliers the gang uses (combat stats, or hacking for a hacking gang) would grow ≥1.5x, and manages territory.
+- **Task priority**: manual train-now → finish training → clear a wanted penalty → build power →
+  earn. A hacking gang never trains combat and gets hacking-gang tasks (Ethical Hacking / Phishing /
+  Money Laundering on the ladder) — `setMemberTask` silently idles a member handed a task outside
+  its gang type.
+- **Training bar scales with ascension**: a member trains until the stats its gang uses — combat
+  average for a combat gang, hacking for a hacking gang — reach 100 × its ascension multiplier for
+  them. Stat level is linear in the multiplier, so this costs the same exp as an unascended member
+  reaching 100 — a flat 100 let ascended members stop training almost immediately. A combat gang's
+  hacking check stays at a flat 100: every ascension resets hacking exp, and scaling it made the
+  gang retrain a stat it barely uses after each one.
+- **Train now**: `run /src/tools/gang-train.js on` puts every member on training (Train Combat, or
+  Train Hacking for a hacking gang) ahead of everything else; `off` resumes normal assignment, and
+  no argument toggles. The manager keeps recruiting, ascending and buying gear while it's on, so
+  there's no need to stop it to force training.
+- **Territory**: gang power only grows from members on **Territory Warfare**, so once the roster is
+  full (12) the strongest half of the roster (by summed stats) switches to it until the win chance
+  is ≥80% against every gang that still holds territory; the other half keeps earning. Clashes are
+  engaged at ≥55% against all of those; gangs with no territory are ignored.
+- **Power is only built when it can win**: your power gain per tick scales with your own
+  territory, while each NPC gang gains ~0.6 regardless. A fresh gang at 1/7 territory with
+  ~100-stat members levels off near a 20% win chance, so building there never reaches a clash
+  and earns nothing. The manager projects the builders' gain against each rival's and only
+  builds once the long-run chance holds ≥55%. Until then every member earns, ascends and gets
+  stronger. Only members on Territory Warfare can die in a clash — high defense makes it rare.
+- **Recruits** are named `Runner-N` using the lowest free number, so a member lost in a clash no
+  longer stalls recruiting on a duplicate name.
+- **Equipment budget**: at most `DEFAULTS.gangEquipBudgetPercent` (5%) of cash per 10 s cycle across
+  the roster, each item under 1% of cash, best value to every member first, owned gear skipped.
 - **Task ranking depends on `Formulas.exe`.** With it, tasks are scored per member with
   `formulas.gang.moneyGain/respectGain/wantedLevelGain` — exact numbers, taking the three objects
-  the manager already holds. Without it, the original four-threshold ladder (train → vigilante →
+  the manager already holds. Until the roster is full, the first third of members (at least one)
+  rank by respect — which unlocks recruits — and the rest by money. The top respect task
+  (Terrorism) earns nothing, and the last recruits need ~2M and ~10M respect, so the whole roster
+  chasing it meant hours without income. Without `Formulas.exe`, the original four-threshold ladder (train → vigilante →
   mug → traffick) is used **unchanged**. There is deliberately no third path: deriving the game's
   scaling by hand would be a guess, and a wrong constant would quietly perform worse than the
   ladder. `tools/program-buyer.js` buys `Formulas.exe`, which is what makes this switch flip.
@@ -242,9 +274,15 @@ These require specific Source Files or BitNode conditions. Each checks for API a
   usable stat gain per dollar — a combat gang no longer spends on charisma and hacking gear.
 
 #### `advanced/sleeve-manager.js` — Sleeve Automation
-- **Requires**: Source-File 10
+- **Requires**: Source-File 10 (or being in BitNode 10)
 - **Cycle**: Every 30 seconds
-- **What it does**: Assigns sleeves to optimal activities — shock recovery first, then synchronization, then faction work / gym training / crime based on sleeve index. Purchases sleeve augmentations when affordable (<1% of money).
+- **What it does**: Gives every sleeve the same priority list instead of a fixed job per sleeve number:
+  1. **Shock recovery until shock is `DEFAULTS.sleeveWorkShock` (33).** A sleeve's exp is scaled by (100 − shock)%. Shock also falls on its own while the sleeve works, at 1/3 the Shock Recovery speed (100 → 0 takes ~55.5 h passively vs ~18.5 h on recovery). Recovering all the way to 0 is never the best choice. Stopping at 33 gives the most exp for any run of ~31 h or more, and is within ~4% of the best at 24 h. The common advice to start working at 95–97 shock loses 30–45%. Sleeve augmentations unlock when shock reaches 0 on its own.
+  2. **Synchronize to 100**, which controls how much of a sleeve's exp you gain too.
+  3. **Homicide for karma** while a gang is possible (SF2 or BitNode 2), not yet created, and karma is above −54,000. Homicide beats Mug on karma/sec at any stat level. With the old number-based roles, a 2-sleeve start (BitNode 10) had no sleeve doing crime at all.
+  4. **Faction work**: each sleeve gets a different faction, most recently joined first. The game won't let two sleeves work the same faction. It tries hacking, then field, then security work. A faction the game rejects (a gang faction, or one you're working yourself) is skipped for 5 minutes.
+  5. **Money crime** (Mug, or Homicide once combat stats average 50) when no faction is free. This replaces training strength at the gym with no end point.
+- **Sleeve augmentations**: bought cheapest-first for sleeves at 0 shock, while each costs under 1% of your money. Failed purchases are now logged instead of swallowed.
 - **Buys capacity**: a new sleeve when `getSleeveCost()` fits `DEFAULTS.sleeveBudgetPercent`, then memory upgrades cheapest-first. A new sleeve outranks memory because it compounds; memory outranks everything else because it *survives an augmentation install*, unlike shock and sync.
 - **Idempotent assignment**: it now reads `getTask()` and skips a sleeve that's already doing what was chosen. Re-issuing a `setTo*` call restarts the task, and crimes and faction work accumulate cycles toward a payout — so the old unconditional re-assignment every 30 s could hold a sleeve permanently at zero progress.
 - **Sleeve count is re-read every cycle.** It used to be read once before the loop, so a sleeve bought mid-run was never assigned work until the daemon restarted the manager.
@@ -360,6 +398,14 @@ Flips the `xpFarmRAM` config override (Port 5). When on, the hack-coordinator so
 run src/tools/share-idle.js on / off
 ```
 Flips the `shareIdleRAM` override — forces `share()` to soak surplus RAM even when the faction-manager isn't reporting an active grind. Has no effect while the EXP farm is on (the EXP farm wins).
+
+#### `tools/gang-train.js` — Force Gang Training
+```
+run src/tools/gang-train.js on     # every member trains
+run src/tools/gang-train.js off    # normal task assignment resumes
+run src/tools/gang-train.js        # toggle
+```
+Flips the `gangTrainNow` override (Port 5). While on, the gang-manager puts every member on Train Combat (Train Hacking for a hacking gang) ahead of every other task, and keeps recruiting, ascending and buying gear — no need to stop the manager to train. Stays on until turned off. Takes effect next cycle.
 
 #### `tools/manager-toggle.js` — Enable/Disable Daemon Managers
 ```
@@ -807,6 +853,7 @@ ns.writePort(5, JSON.stringify({
 | `hwgwMinHackPercent` | 0.01 | Floor on the shrunken steal fraction. Below it, HWGW is declared infeasible for that target and prep/hack-income runs instead |
 | `xpFarmRAM` | false | Soak surplus RAM with the EXP farm instead of `share()` (toggle with `xp-farm.js`) |
 | `shareIdleRAM` | false | Force `share()` on surplus RAM even without an active faction grind (toggle with `share-idle.js`) |
+| `gangTrainNow` | false | Put every gang member on training ahead of every other task (toggle with `gang-train.js`) |
 | `disabledManagers` | `[]` | Manager ids the daemon won't launch (and will kill if running) — toggle with `manager-toggle.js` |
 
 ### Tuning Tips
