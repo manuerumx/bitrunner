@@ -172,6 +172,25 @@ export function factionWorkOrder(joined, status) {
 }
 
 /**
+ * Joined factions that are NOT in the published pending list, most recently joined first.
+ *
+ * Their augmentations are all within reach on reputation already, so they rank below
+ * pending factions and below company work. They still beat a money crime for a sleeve
+ * with nothing else to do: the rep turns into favor on the next run and pays for
+ * NeuroFlux Governor levels. Empty without a published list, because factionWorkOrder
+ * already offers every joined faction then.
+ *
+ * @param {string[]} joined  player.factions
+ * @param {{pendingFactions?: string[]} | null} status  FACTION_STATUS port payload
+ * @returns {string[]}
+ */
+export function spareFactions(joined, status) {
+  if (!status || !Array.isArray(status.pendingFactions)) return [];
+  const pending = status.pendingFactions;
+  return [...joined].reverse().filter((f) => !pending.includes(f));
+}
+
+/**
  * Give each eligible sleeve its own faction.
  *
  * The game rejects a second sleeve on a faction another sleeve already works, so each

@@ -12,6 +12,7 @@ import {
   needsKarma,
   needsReassignment,
   planSleeveSpending,
+  spareFactions,
 } from "/src/lib/sleeves.js";
 import { log, formatMoney } from "/src/lib/utils.js";
 
@@ -42,6 +43,20 @@ function isInGang(ns) {
     return ns.gang.inGang();
   } catch {
     return false;
+  }
+}
+
+/**
+ * The player's gang faction, or null. Nobody can work for it — its reputation comes from
+ * the gang — so it is never offered to a sleeve.
+ *
+ * @param {NS} ns
+ */
+function gangFaction(ns) {
+  try {
+    return ns.gang.inGang() ? ns.gang.getGangInformation().faction : null;
+  } catch {
+    return null;
   }
 }
 
@@ -158,6 +173,8 @@ export async function main(ns) {
 
     const workReady = (s) => s.info.shock <= workShock && s.info.sync >= 100 && !needKarma;
     const rejected = [...rejectedWork.keys()];
+    const gang = gangFaction(ns);
+    if (gang) rejected.push(gang);
 
     // Factions with augmentations still needing rep, as published by faction-manager.js.
     const factionStatus = /** @type {FactionStatus | null} */ (readPortData(ns, PORTS.FACTION_STATUS));
@@ -182,6 +199,19 @@ export async function main(ns) {
       { exclude: rejected },
     );
 
+    // Sleeves with neither go to a joined faction that has no augmentation left needing
+    // rep: the rep still becomes favor and NeuroFlux levels, which beats a money crime.
+    const taken = [...factions.values()].filter((f) => f !== null);
+    const spares = assignFactions(
+      sleeves.map((s) => ({
+        sleeveNum: s.sleeveNum,
+        eligible: workReady(s) && !factions.get(s.sleeveNum) && !companies.get(s.sleeveNum),
+        current: s.live?.type === "FACTION" ? s.live.factionName : null,
+      })),
+      spareFactions(player.factions, factionStatus),
+      { exclude: [...rejected, ...taken] },
+    );
+
     // Exact success chances for 0 GB when Formulas.exe is owned; otherwise chooseSleeveTask
     // uses lib/crime.js's port of the same formula. Re-checked each cycle because
     // program-buyer.js can buy the file mid-run.
@@ -197,7 +227,7 @@ export async function main(ns) {
       };
       const task = chooseSleeveTask(info, {
         needKarma,
-        faction: factions.get(i) ?? null,
+        faction: factions.get(i) ?? spares.get(i) ?? null,
         company: companies.get(i) ?? null,
         workShock,
         ...crimeCtx,

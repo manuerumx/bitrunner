@@ -8,6 +8,7 @@ import {
   assignFactions,
   assignCompanies,
   factionWorkOrder,
+  spareFactions,
   needsKarma,
   canBuySleeveAugs,
   FACTION_WORK_TYPES,
@@ -292,6 +293,22 @@ test("factionWorkOrder drops published factions the player is no longer in", () 
 test("factionWorkOrder falls back to newest-joined first without a published list", () => {
   assert.deepEqual(factionWorkOrder(["CyberSec", "NiteSec"], null), ["NiteSec", "CyberSec"]);
   assert.deepEqual(factionWorkOrder(["CyberSec", "NiteSec"], { currentFaction: null }), ["NiteSec", "CyberSec"]);
+});
+
+// ── spareFactions ───────────────────────────────────────────────────────────
+//
+// A faction whose augmentations are all within reach on reputation isn't "pending", but
+// rep there still builds favor for the next run and pays for NeuroFlux levels — better
+// than a money crime for a sleeve with nothing else to do.
+
+test("spareFactions lists joined factions outside the pending list, newest first", () => {
+  const status = { pendingFactions: ["NiteSec"] };
+  assert.deepEqual(spareFactions(["CyberSec", "NiteSec", "Tian Di Hui"], status), ["Tian Di Hui", "CyberSec"]);
+});
+
+// Without a published list factionWorkOrder already offers every joined faction.
+test("spareFactions is empty without a published list", () => {
+  assert.deepEqual(spareFactions(["CyberSec", "NiteSec"], null), []);
 });
 
 // ── companies ───────────────────────────────────────────────────────────────
