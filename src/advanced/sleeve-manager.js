@@ -268,6 +268,15 @@ export async function main(ns) {
           case "crime":
             ns.sleeve.setToCommitCrime(i, task.crime);
             log(ns, `Sleeve ${i}: committing ${task.crime}`);
+            // A sleeve on a money crime means every faction and company was taken or
+            // unavailable. Say which, so "why isn't it working for a faction" has an answer.
+            if (!needKarma) {
+              const published = Array.isArray(factionStatus?.pendingFactions);
+              log(ns, `  joined: ${player.factions.join(", ") || "none"}`);
+              log(ns, `  pending (${published ? "published" : "NOT published"}): ${factionWorkOrder(player.factions, factionStatus).join(", ") || "none"}`);
+              log(ns, `  skipped: ${rejected.join(", ") || "none"}`);
+              log(ns, `  taken: ${[...taken, ...[...spares.values()].filter(Boolean)].join(", ") || "none"}`);
+            }
             break;
         }
       } catch {}
