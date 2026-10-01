@@ -4,7 +4,9 @@ import {
   CRIME_KARMA,
   GANG_KARMA_REQUIREMENT,
   CRIME_TIME_MS,
+  crimeSuccessChance,
   fallbackCrime,
+  pickAchievableCrime,
   needsRecommit,
   rankCrimes,
   selectNextCrime,
@@ -189,4 +191,67 @@ test("crime durations are all positive", () => {
 
 test("the gang karma requirement is negative — karma counts down", () => {
   assert.ok(GANG_KARMA_REQUIREMENT < 0);
+});
+
+// --- crimeSuccessChance -----------------------------------------------------------
+//
+// A local port of the game's formula, so a success chance exists without Formulas.exe.
+// Sleeves need it: without a chance the manager parked fresh sleeves on Homicide at well
+// under 1%, where they loop and never land one.
+
+const person = (n, extra = {}) => ({
+  skills: { strength: n, defense: n, dexterity: n, agility: n },
+  ...extra,
+});
+
+test("crimeSuccessChance weights skills, divides by 975 and by the crime's difficulty", () => {
+  // Homicide: 2 str + 2 def + 0.5 dex + 0.5 agi, difficulty 1.
+  assert.ok(Math.abs(crimeSuccessChance(person(1), "Homicide") - 5 / 975) < 1e-9);
+  assert.ok(Math.abs(crimeSuccessChance(person(100), "Homicide") - 500 / 975) < 1e-9);
+  // Shoplift: dex + agi, difficulty 1/20.
+  assert.ok(Math.abs(crimeSuccessChance(person(5), "Shoplift") - (10 / 975) * 20) < 1e-9);
+});
+
+test("crimeSuccessChance caps at 1 and applies the crime_success multiplier", () => {
+  assert.equal(crimeSuccessChance(person(100), "Mug"), 1);
+  const boosted = person(1, { mults: { crime_success: 2 } });
+  assert.ok(Math.abs(crimeSuccessChance(boosted, "Homicide") - 10 / 975) < 1e-9);
+});
+
+test("crimeSuccessChance is 0 for a crime it has no weights for", () => {
+  assert.equal(crimeSuccessChance(person(500), "Jaywalking"), 0);
+});
+
+// --- pickAchievableCrime ----------------------------------------------------------
+
+// Pure expected value still picks Homicide for karma at a 1% chance, which is the crime
+// that "runs and runs" and never commits. The floor restricts the ranking to crimes the
+// sleeve can actually land.
+test("pickAchievableCrime ranks only crimes at or above the success floor", () => {
+  const candidates = [crime("Homicide", 45_000, 0.2), crime("Mug", 36_000, 0.9), crime("Shoplift", 15_000, 1)];
+  assert.equal(pickAchievableCrime(candidates, null, { goal: "karma", minChance: 0.5 }), "Mug");
+  candidates[0].chance = 0.5;
+  assert.equal(pickAchievableCrime(candidates, null, { goal: "karma", minChance: 0.5 }), "Homicide");
+});
+
+// Nothing clears the floor on a fresh sleeve. The likeliest crime is the one that pays
+// full exp most often, so it is how the sleeve trains its way up to the floor.
+test("pickAchievableCrime takes the likeliest crime when none clears the floor", () => {
+  const candidates = [crime("Homicide", 45_000, 0.01), crime("Mug", 36_000, 0.02), crime("Shoplift", 15_000, 0.04)];
+  assert.equal(pickAchievableCrime(candidates, null, { goal: "karma", minChance: 0.5 }), "Shoplift");
+});
+
+test("pickAchievableCrime keeps the running crime unless another is clearly better", () => {
+  const near = [crime("Homicide", 45_000, 0.68), crime("Mug", 36_000, 1)];
+  // Money: Homicide 10.2k/s vs Mug 9k/s — 13% better, past the 10% margin.
+  assert.equal(pickAchievableCrime(near, "Mug", { minChance: 0.5 }), "Homicide");
+  near[0].chance = 0.62; // 9.3k/s, only 3% better
+  assert.equal(pickAchievableCrime(near, "Mug", { minChance: 0.5 }), "Mug");
+  // Below the floor too: don't flip between two near-tied long shots.
+  const weak = [crime("Mug", 36_000, 0.105), crime("Shoplift", 15_000, 0.1)];
+  assert.equal(pickAchievableCrime(weak, "Shoplift", { minChance: 0.5 }), "Shoplift");
+});
+
+test("pickAchievableCrime returns null with nothing to rank", () => {
+  assert.equal(pickAchievableCrime([], null), null);
 });

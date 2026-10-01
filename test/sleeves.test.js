@@ -1,10 +1,13 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { companiesToUnlock, sleeveCompanies } from "/src/lib/companies.js";
 import {
   needsReassignment,
   planSleeveSpending,
   chooseSleeveTask,
   assignFactions,
+  assignCompanies,
+  factionWorkOrder,
   needsKarma,
   canBuySleeveAugs,
   FACTION_WORK_TYPES,
@@ -150,12 +153,32 @@ test("chooseSleeveTask synchronizes once shock is gone", () => {
   assert.deepEqual(chooseSleeveTask(sleeve, { needKarma: false, faction: null, workShock: 0 }), { type: "sync" });
 });
 
-// Homicide wins karma/sec at any stat level: both success chances scale linearly with
-// combat stats, and Homicide yields 12x Mug's karma per attempt in 3/4 the time.
-test("chooseSleeveTask commits Homicide while karma is still needed", () => {
+// Homicide is the best karma crime only once the sleeve can land it. A fresh sleeve is
+// under 3% on it, so it loops without ever committing one; it takes the likeliest crime
+// instead and trains up.
+test("chooseSleeveTask picks a karma crime the sleeve can actually land", () => {
+  const ctx = { needKarma: true, faction: "CyberSec", workShock: 0 };
+  const fresh = { shock: 0, sync: 100, skills };
+  assert.deepEqual(chooseSleeveTask(fresh, ctx), { type: "crime", crime: "Shoplift" });
+  const strong = { shock: 0, sync: 100, skills: { strength: 100, defense: 100, dexterity: 100, agility: 100 } };
+  assert.deepEqual(chooseSleeveTask(strong, ctx), { type: "crime", crime: "Homicide" });
+});
+
+// Formulas.exe gives the exact chance for 0 GB; the manager passes it in when owned.
+test("chooseSleeveTask uses the supplied success-chance source", () => {
   const sleeve = { shock: 0, sync: 100, skills };
-  const task = chooseSleeveTask(sleeve, { needKarma: true, faction: "CyberSec", workShock: 0 });
+  const chanceOf = (_person, name) => (name === "Homicide" ? 0.9 : 0.1);
+  const task = chooseSleeveTask(sleeve, { needKarma: true, faction: null, workShock: 0, chanceOf });
   assert.deepEqual(task, { type: "crime", crime: "Homicide" });
+});
+
+// Switching crimes throws away the running one's progress.
+test("chooseSleeveTask keeps the running crime over a marginally better one", () => {
+  const sleeve = { shock: 0, sync: 100, skills };
+  const chanceOf = (_person, name) => ({ Homicide: 0.62, Mug: 1 })[name] ?? 0;
+  const ctx = { needKarma: false, faction: null, workShock: 0, chanceOf };
+  assert.equal(chooseSleeveTask(sleeve, ctx).crime, "Homicide");
+  assert.equal(chooseSleeveTask(sleeve, { ...ctx, currentCrime: "Mug" }).crime, "Mug");
 });
 
 test("chooseSleeveTask works the assigned faction once karma is done", () => {
@@ -164,15 +187,40 @@ test("chooseSleeveTask works the assigned faction once karma is done", () => {
   assert.deepEqual(task, { type: "faction", faction: "CyberSec", workTypes: FACTION_WORK_TYPES });
 });
 
+// Faction rep buys augmentations now; company rep only unlocks a faction to grind later.
+test("chooseSleeveTask prefers faction work over company work", () => {
+  const sleeve = { shock: 0, sync: 100, skills };
+  const task = chooseSleeveTask(sleeve, { needKarma: false, faction: "CyberSec", company: "ECorp", workShock: 0 });
+  assert.equal(task.type, "faction");
+});
+
+test("chooseSleeveTask works the assigned company when no faction is free", () => {
+  const sleeve = { shock: 0, sync: 100, skills };
+  const task = chooseSleeveTask(sleeve, { needKarma: false, faction: null, company: "ECorp", workShock: 0 });
+  assert.deepEqual(task, { type: "company", company: "ECorp" });
+});
+
+test("chooseSleeveTask puts karma ahead of company work", () => {
+  const sleeve = { shock: 0, sync: 100, skills };
+  const task = chooseSleeveTask(sleeve, { needKarma: true, faction: null, company: "ECorp", workShock: 0 });
+  assert.equal(task.type, "crime");
+});
+
 // With no faction to work, the old manager sent a sleeve to the gym for strength forever.
-test("chooseSleeveTask falls back to a money crime when no faction is free", () => {
+test("chooseSleeveTask falls back to a money crime when no faction or company is free", () => {
   const weak = { shock: 0, sync: 100, skills };
-  const strong = { shock: 0, sync: 100, skills: { strength: 90, defense: 90, dexterity: 90, agility: 90 } };
-  assert.deepEqual(chooseSleeveTask(weak, { needKarma: false, faction: null, workShock: 0 }), { type: "crime", crime: "Mug" });
+  const strong = { shock: 0, sync: 100, skills: { strength: 200, defense: 200, dexterity: 200, agility: 200 } };
+  assert.deepEqual(chooseSleeveTask(weak, { needKarma: false, faction: null, workShock: 0 }), { type: "crime", crime: "Shoplift" });
   assert.deepEqual(chooseSleeveTask(strong, { needKarma: false, faction: null, workShock: 0 }), {
     type: "crime",
     crime: "Homicide",
   });
+});
+
+test("needsReassignment is false when the sleeve already works at the desired company", () => {
+  const desired = { type: "company", company: "ECorp" };
+  assert.equal(needsReassignment({ type: "COMPANY", companyName: "ECorp" }, desired), false);
+  assert.equal(needsReassignment({ type: "COMPANY", companyName: "NWO" }, desired), true);
 });
 
 // ── assignFactions ──────────────────────────────────────────────────────────
@@ -216,6 +264,66 @@ test("assignFactions skips excluded factions and ineligible sleeves", () => {
     { exclude: ["Slum Snakes"] },
   );
   assert.deepEqual([...result], [[0, null], [1, "CyberSec"], [2, null]]);
+});
+
+// ── factionWorkOrder ────────────────────────────────────────────────────────
+//
+// faction-manager.js publishes the factions that still have augmentations needing rep.
+// Rep earned anywhere else buys nothing.
+
+test("factionWorkOrder uses the published pending-augment factions, best first", () => {
+  const status = { currentFaction: null, pendingFactions: ["NiteSec", "CyberSec"] };
+  assert.deepEqual(factionWorkOrder(["CyberSec", "Tian Di Hui", "NiteSec"], status), ["NiteSec", "CyberSec"]);
+});
+
+// The game rejects a sleeve on the faction the player is working, and a rejection costs
+// the sleeve a retry window, so that faction is dropped up front.
+test("factionWorkOrder leaves out the faction the player is working", () => {
+  const status = { currentFaction: "NiteSec", pendingFactions: ["NiteSec", "CyberSec"] };
+  assert.deepEqual(factionWorkOrder(["CyberSec", "NiteSec"], status), ["CyberSec"]);
+});
+
+test("factionWorkOrder drops published factions the player is no longer in", () => {
+  const status = { currentFaction: null, pendingFactions: ["NiteSec", "CyberSec"] };
+  assert.deepEqual(factionWorkOrder(["CyberSec"], status), ["CyberSec"]);
+});
+
+// Faction manager disabled, or a status written before it published the list.
+test("factionWorkOrder falls back to newest-joined first without a published list", () => {
+  assert.deepEqual(factionWorkOrder(["CyberSec", "NiteSec"], null), ["NiteSec", "CyberSec"]);
+  assert.deepEqual(factionWorkOrder(["CyberSec", "NiteSec"], { currentFaction: null }), ["NiteSec", "CyberSec"]);
+});
+
+// ── companies ───────────────────────────────────────────────────────────────
+
+test("companiesToUnlock lists megacorps whose faction is not joined yet", () => {
+  const todo = companiesToUnlock(["ECorp", "Fulcrum Secret Technologies"]);
+  assert.equal(todo.includes("ECorp"), false);
+  // The one megacorp whose faction has a different name.
+  assert.equal(todo.includes("Fulcrum Technologies"), false);
+  assert.equal(todo.includes("NWO"), true);
+  assert.equal(todo.length, 8);
+});
+
+// A sleeve can only work where the player holds a job, and company rep is only worth
+// earning while it still unlocks a faction.
+test("sleeveCompanies keeps held jobs at companies with a faction still to unlock", () => {
+  const jobs = { ECorp: "Software Engineer", NWO: "IT Intern", FoodNStuff: "Employee" };
+  assert.deepEqual(sleeveCompanies(jobs, ["ECorp"]), ["NWO"]);
+  assert.deepEqual(sleeveCompanies({}, []), []);
+});
+
+test("assignCompanies gives each sleeve its own company and keeps current ones", () => {
+  const result = assignCompanies(
+    [
+      { sleeveNum: 0, eligible: true, current: null },
+      { sleeveNum: 1, eligible: true, current: "NWO" },
+      { sleeveNum: 2, eligible: false, current: null },
+      { sleeveNum: 3, eligible: true, current: null },
+    ],
+    ["NWO", "ECorp"],
+  );
+  assert.deepEqual([...result], [[0, "ECorp"], [1, "NWO"], [2, null], [3, null]]);
 });
 
 // ── needsKarma ──────────────────────────────────────────────────────────────

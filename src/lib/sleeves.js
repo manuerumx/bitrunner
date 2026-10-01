@@ -1,7 +1,13 @@
 // Sleeve decision logic. See docs/API-COVERAGE-AUDIT.md §5.6.
 
 import { planPurchases } from "/src/lib/purchasing.js";
-import { fallbackCrime, GANG_KARMA_REQUIREMENT } from "/src/lib/crime.js";
+import {
+  CRIME_MONEY,
+  GANG_KARMA_REQUIREMENT,
+  KNOWN_CRIMES,
+  crimeSuccessChance,
+  pickAchievableCrime,
+} from "/src/lib/crime.js";
 
 /**
  * Faction work a sleeve may do, best first. Not every faction offers hacking work, so the
@@ -24,6 +30,7 @@ const TASK_MATCHERS = {
     live.type === "FACTION" &&
     live.factionName === want.faction &&
     want.workTypes.includes(live.factionWorkType),
+  company: (live, want) => live.type === "COMPANY" && live.companyName === want.company,
 };
 
 /**
@@ -89,6 +96,31 @@ export function needsKarma({ karma, inGang, canGang }) {
 }
 
 /**
+ * Which crime a sleeve should commit.
+ *
+ * Ranked on expected yield per second among the crimes this sleeve lands at least
+ * minChance of the time; see pickAchievableCrime for why the floor exists and what
+ * happens below it.
+ *
+ * @param {{skills: any, mults?: {crime_success?: number}}} sleeve
+ * @param {{goal?: "money" | "karma", currentCrime?: string | null, minChance?: number,
+ *   chanceOf?: (person: any, crime: CrimeType) => number}} [opts]
+ *   chanceOf defaults to the local formula; the manager passes ns.formulas' when owned
+ * @returns {CrimeType}
+ */
+export function chooseSleeveCrime(
+  sleeve,
+  { goal = "money", currentCrime = null, minChance, chanceOf = crimeSuccessChance } = {},
+) {
+  const candidates = KNOWN_CRIMES.map((name) => ({
+    name,
+    money: CRIME_MONEY[name],
+    chance: chanceOf(sleeve, name),
+  }));
+  return pickAchievableCrime(candidates, currentCrime, { goal, minChance }) ?? "Shoplift";
+}
+
+/**
  * What a sleeve should be doing.
  *
  * Shock recovery until shock reaches workShock (DEFAULTS.sleeveWorkShock — see there for
@@ -96,20 +128,46 @@ export function needsKarma({ karma, inGang, canGang }) {
  * later, which is when sleeve augmentations become buyable. Sync comes next, because it
  * controls how much of a sleeve's exp the player also gains.
  *
- * After that, karma for a gang, then the faction assignFactions() gave this sleeve, then a
- * money crime. Karma is always Homicide: both its success chance and Mug's scale linearly
- * with combat stats, and Homicide yields 12x the karma per attempt in 3/4 the time.
+ * After that: karma for a gang, then the faction assignFactions() gave this sleeve, then
+ * the company assignCompanies() gave it, then a money crime. Faction work outranks company
+ * work because faction rep buys augmentations now, while company rep only unlocks a
+ * faction to grind later.
  *
- * @param {{shock: number, sync: number,
- *   skills: {strength: number, defense: number, dexterity: number, agility: number}}} sleeve
- * @param {{needKarma: boolean, faction: string | null, workShock: number}} ctx
+ * @param {{shock: number, sync: number, skills: any,
+ *   mults?: {crime_success?: number}}} sleeve
+ * @param {{needKarma: boolean, faction: string | null, company?: string | null,
+ *   workShock: number, currentCrime?: string | null, minChance?: number,
+ *   chanceOf?: (person: any, crime: CrimeType) => number}} ctx
  */
-export function chooseSleeveTask(sleeve, { needKarma, faction, workShock }) {
+export function chooseSleeveTask(sleeve, ctx) {
+  const { needKarma, faction, company = null, workShock, currentCrime, minChance, chanceOf } = ctx;
+  const crime = (goal) => chooseSleeveCrime(sleeve, { goal, currentCrime, minChance, chanceOf });
+
   if (sleeve.shock > workShock) return { type: "recovery" };
   if (sleeve.sync < 100) return { type: "sync" };
-  if (needKarma) return { type: "crime", crime: fallbackCrime(sleeve.skills, { goal: "karma" }) };
+  if (needKarma) return { type: "crime", crime: crime("karma") };
   if (faction) return { type: "faction", faction, workTypes: FACTION_WORK_TYPES };
-  return { type: "crime", crime: fallbackCrime(sleeve.skills) };
+  if (company) return { type: "company", company };
+  return { type: "crime", crime: crime("money") };
+}
+
+/**
+ * Factions worth a sleeve's time, best first.
+ *
+ * advanced/faction-manager.js publishes the factions that still have augmentations needing
+ * reputation; rep earned anywhere else buys nothing, so those are the only ones handed out.
+ * The faction the player is working is left out, because the game rejects a sleeve there.
+ * With no published list (faction manager disabled) every joined faction is offered, most
+ * recently joined first, which is usually the one whose augmentations are next.
+ *
+ * @param {string[]} joined  player.factions
+ * @param {{currentFaction?: string | null, pendingFactions?: string[]} | null} status
+ *   FACTION_STATUS port payload
+ * @returns {string[]}
+ */
+export function factionWorkOrder(joined, status) {
+  if (!status || !Array.isArray(status.pendingFactions)) return [...joined].reverse();
+  return status.pendingFactions.filter((f) => joined.includes(f) && f !== status.currentFaction);
 }
 
 /**
@@ -146,3 +204,9 @@ export function assignFactions(sleeves, factions, { exclude = [] } = {}) {
   }
   return result;
 }
+
+/**
+ * Give each eligible sleeve its own company. The game applies the same one-sleeve-each
+ * rule to companies as to factions, and moving a sleeve restarts its work just the same.
+ */
+export const assignCompanies = assignFactions;
