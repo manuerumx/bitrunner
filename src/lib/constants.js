@@ -99,15 +99,6 @@ export const DEFAULTS = {
   // minutes and starves the hacknet/server/aug buyers, which poll far less often. Raise it
   // if you are saving for a big purchase; set it to 0 to let the trader take everything.
   stockReservedCash: 1e9,
-  // Largest share of a new position the commission may be, before the trader refuses to
-  // open it. The reserve above keeps cash pinned near its floor, so the per-symbol slice
-  // stays small and a flat $100k fee was eating 20% of every entry (40% round trip) — a
-  // $24b portfolio opening $500k positions. Refusing lets the surplus compound across
-  // cycles into one worthwhile entry instead of a dozen value-destroying ones. A ratio,
-  // so it binds hard when poor and is irrelevant when rich; no per-BitNode retuning.
-  // Raise it to trade more eagerly at worse prices; set it to Infinity for the old
-  // behaviour. See worthOpening in src/lib/market.js.
-  stockMinCommissionRatio: 0.01,
   // Fraction of cash program-buyer.js may spend per burst on the NON-port-opener darkweb
   // extras (Formulas.exe at $5b, DarkscapeNavigator.exe); the rest stays liquid for
   // server-buyer.js and augmentation-buyer.js. See docs/API-COVERAGE-AUDIT.md §5.
@@ -125,6 +116,16 @@ export const DEFAULTS = {
   // Sleeves and sleeve memory are permanent (memory survives an install), but they compete
   // with augmentations, so a small slice per cycle.
   sleeveBudgetPercent: 0.1,
+  // Sleeves stay on Shock Recovery until shock drops to this, then go to work. A sleeve's
+  // exp is scaled by (100 - shock)%, and shock also falls on its own at 1/3 the recovery
+  // speed while it works — so the last stretch of recovery costs more output than it buys.
+  // 33 maximizes exp for any run of ~31 h or more and is within ~4% of best at 24 h.
+  // Recovering to 0 is never optimal; 97 (common advice) loses ~30-45%.
+  sleeveWorkShock: 33,
+  // Gang equipment per 10 s cycle, across the whole roster. Without a cap every member
+  // tested every item against the same start-of-cycle cash figure, so one cycle could
+  // spend many multiples of it. Each item must also cost under 1% of cash.
+  gangEquipBudgetPercent: 0.05,
   // Boost materials multiply a division's production while held. Targets are per city and
   // deliberately modest — an overfilled warehouse stalls production outright.
   //
@@ -172,6 +173,10 @@ export const DEFAULTS = {
   // with tools/xp-farm.js. xpFarmRAM and share() compete for the same surplus, so xpFarmRAM WINS when
   // on — share() earns zero hacking EXP, so leaving it on is what stalls levelling on a big botnet.
   xpFarmRAM: false,
+  // When true, gang-manager puts every member on training (Train Combat, or Train Hacking for a
+  // hacking gang) ahead of every other task, until turned off. Toggle at runtime with
+  // tools/gang-train.js — the manager keeps recruiting, ascending and buying gear meanwhile.
+  gangTrainNow: false,
   // Manager ids (see MANAGERS above) the daemon should not launch — and should kill if it finds
   // one already running. Toggle at runtime with tools/manager-toggle.js. Use this to stop a
   // manager from acting (e.g. faction-manager overriding your current work with its own grind)

@@ -103,6 +103,7 @@ src/
     ├── backdoor.js, backdoor-next.js, reset-prep.js
     ├── list-augs.js                             ← augmentation catalog (SF-4)
     ├── hwgw-tune.js, xp-farm.js, share-idle.js  ← runtime config toggles
+    ├── gang-train.js                            ← force every gang member to train
     ├── manager-toggle.js                        ← enable/disable daemon managers
     ├── ram-report.js                             ← per-manager / per-function RAM audit
     ├── program-buyer.js, home-upgrader.js        ← one-shot buyers (SF-4)
@@ -209,10 +210,6 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 - **Requires**: WSE Account + TIX API Access (~$30B total investment)
 - **Cycle**: Every 6 seconds (matches stock price update frequency)
 - **Strategy with 4S data**: Buys stocks with forecast >55%, sells when forecast drops below 50%. Commission-aware — the commission now comes from `ns.stock.getConstants()` (0 GB) instead of a hardcoded $100K.
-- **Entry gate**: A buy is skipped unless the commission is at most `stockMinCommissionRatio` (1%) of the position it opens. The trader then *saves* — cash accumulates across cycles until one worthwhile entry is affordable.
-  > Without this the trader traded itself broke on fees. `stockReservedCash` pins cash near its $1b floor, so the per-symbol slice stays at 5% of a small surplus; a live $24b portfolio was opening **$500k positions against a $100k fee** — 21% on entry, 42% round trip, i.e. a trade needing a 42% price move to break even. Gating turns that into ~$12m positions at 1.6% round trip. A ratio rather than a flat floor, so it binds hard when poor, goes irrelevant when rich, and never needs retuning per BitNode.
-  >
-  > **A quiet trader is usually this, not a bug.** `stock-report.js` shows `wait` in its NEXT column and names the cash figure it is saving toward.
 - **Strategy without 4S**: Momentum. It keeps a bounded 20-sample price history per symbol and trades only on a ≥4% rise or ≥2% fall, and only once it has 12 samples — so the first ~72 s after a restart it deliberately does nothing rather than trade blind. Positions are capped at 20% of the cycle budget.
   > Before this, the trader's entire buy/sell body sat inside `if (use4S)`. Without 4S data it looped forever at 6 s, read prices, and never placed a single trade.
 - **Access**: `tools/market-access.js` buys the WSE → TIX → 4S → 4S TIX ladder for it. The `hasTixApiAccess()` / `has4SData()` probes (0.05 GB each) replaced try/catch guesswork.
@@ -235,10 +232,41 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 #### `advanced/gang-manager.js` — Gang Operations
 - **Requires**: Source-File 2 (or BitNode 2), gang must be created first
 - **Cycle**: Every 10 seconds
-- **What it does**: Recruits members, assigns tasks, buys equipment, ascends members when multiplier gain ≥1.5x, manages territory warfare (enables when win chance >55%).
+- **What it does**: Recruits members, assigns tasks, buys equipment, ascends members when the multipliers the gang uses (combat stats, or hacking for a hacking gang) would grow ≥1.5x, and manages territory.
+- **Task priority**: manual train-now → finish training → clear a wanted penalty → build power →
+  earn. A hacking gang never trains combat and gets hacking-gang tasks (Ethical Hacking / Phishing /
+  Money Laundering on the ladder) — `setMemberTask` silently idles a member handed a task outside
+  its gang type.
+- **Training bar scales with ascension**: a member trains until the stats its gang uses — combat
+  average for a combat gang, hacking for a hacking gang — reach 100 × its ascension multiplier for
+  them. Stat level is linear in the multiplier, so this costs the same exp as an unascended member
+  reaching 100 — a flat 100 let ascended members stop training almost immediately. A combat gang's
+  hacking check stays at a flat 100: every ascension resets hacking exp, and scaling it made the
+  gang retrain a stat it barely uses after each one.
+- **Train now**: `run /src/tools/gang-train.js on` puts every member on training (Train Combat, or
+  Train Hacking for a hacking gang) ahead of everything else; `off` resumes normal assignment, and
+  no argument toggles. The manager keeps recruiting, ascending and buying gear while it's on, so
+  there's no need to stop it to force training.
+- **Territory**: gang power only grows from members on **Territory Warfare**, so once the roster is
+  full (12) the strongest half of the roster (by summed stats) switches to it until the win chance
+  is ≥80% against every gang that still holds territory; the other half keeps earning. Clashes are
+  engaged at ≥55% against all of those; gangs with no territory are ignored.
+- **Power is only built when it can win**: your power gain per tick scales with your own
+  territory, while each NPC gang gains ~0.6 regardless. A fresh gang at 1/7 territory with
+  ~100-stat members levels off near a 20% win chance, so building there never reaches a clash
+  and earns nothing. The manager projects the builders' gain against each rival's and only
+  builds once the long-run chance holds ≥55%. Until then every member earns, ascends and gets
+  stronger. Only members on Territory Warfare can die in a clash — high defense makes it rare.
+- **Recruits** are named `Runner-N` using the lowest free number, so a member lost in a clash no
+  longer stalls recruiting on a duplicate name.
+- **Equipment budget**: at most `DEFAULTS.gangEquipBudgetPercent` (5%) of cash per 10 s cycle across
+  the roster, each item under 1% of cash, best value to every member first, owned gear skipped.
 - **Task ranking depends on `Formulas.exe`.** With it, tasks are scored per member with
   `formulas.gang.moneyGain/respectGain/wantedLevelGain` — exact numbers, taking the three objects
-  the manager already holds. Without it, the original four-threshold ladder (train → vigilante →
+  the manager already holds. Until the roster is full, the first third of members (at least one)
+  rank by respect — which unlocks recruits — and the rest by money. The top respect task
+  (Terrorism) earns nothing, and the last recruits need ~2M and ~10M respect, so the whole roster
+  chasing it meant hours without income. Without `Formulas.exe`, the original four-threshold ladder (train → vigilante →
   mug → traffick) is used **unchanged**. There is deliberately no third path: deriving the game's
   scaling by hand would be a guess, and a wrong constant would quietly perform worse than the
   ladder. `tools/program-buyer.js` buys `Formulas.exe`, which is what makes this switch flip.
@@ -246,9 +274,15 @@ These require specific Source Files or BitNode conditions. Each checks for API a
   usable stat gain per dollar — a combat gang no longer spends on charisma and hacking gear.
 
 #### `advanced/sleeve-manager.js` — Sleeve Automation
-- **Requires**: Source-File 10
+- **Requires**: Source-File 10 (or being in BitNode 10)
 - **Cycle**: Every 30 seconds
-- **What it does**: Assigns sleeves to optimal activities — shock recovery first, then synchronization, then faction work / gym training / crime based on sleeve index. Purchases sleeve augmentations when affordable (<1% of money).
+- **What it does**: Gives every sleeve the same priority list instead of a fixed job per sleeve number:
+  1. **Shock recovery until shock is `DEFAULTS.sleeveWorkShock` (33).** A sleeve's exp is scaled by (100 − shock)%. Shock also falls on its own while the sleeve works, at 1/3 the Shock Recovery speed (100 → 0 takes ~55.5 h passively vs ~18.5 h on recovery). Recovering all the way to 0 is never the best choice. Stopping at 33 gives the most exp for any run of ~31 h or more, and is within ~4% of the best at 24 h. The common advice to start working at 95–97 shock loses 30–45%. Sleeve augmentations unlock when shock reaches 0 on its own.
+  2. **Synchronize to 100**, which controls how much of a sleeve's exp you gain too.
+  3. **Homicide for karma** while a gang is possible (SF2 or BitNode 2), not yet created, and karma is above −54,000. Homicide beats Mug on karma/sec at any stat level. With the old number-based roles, a 2-sleeve start (BitNode 10) had no sleeve doing crime at all.
+  4. **Faction work**: each sleeve gets a different faction, most recently joined first. The game won't let two sleeves work the same faction. It tries hacking, then field, then security work. A faction the game rejects (a gang faction, or one you're working yourself) is skipped for 5 minutes.
+  5. **Money crime** (Mug, or Homicide once combat stats average 50) when no faction is free. This replaces training strength at the gym with no end point.
+- **Sleeve augmentations**: bought cheapest-first for sleeves at 0 shock, while each costs under 1% of your money. Failed purchases are now logged instead of swallowed.
 - **Buys capacity**: a new sleeve when `getSleeveCost()` fits `DEFAULTS.sleeveBudgetPercent`, then memory upgrades cheapest-first. A new sleeve outranks memory because it compounds; memory outranks everything else because it *survives an augmentation install*, unlike shock and sync.
 - **Idempotent assignment**: it now reads `getTask()` and skips a sleeve that's already doing what was chosen. Re-issuing a `setTo*` call restarts the task, and crimes and faction work accumulate cycles toward a payout — so the old unconditional re-assignment every 30 s could hold a sleeve permanently at zero progress.
 - **Sleeve count is re-read every cycle.** It used to be read once before the loop, so a sleeve bought mid-run was never assigned work until the daemon restarted the manager.
@@ -364,6 +398,14 @@ Flips the `xpFarmRAM` config override (Port 5). When on, the hack-coordinator so
 run src/tools/share-idle.js on / off
 ```
 Flips the `shareIdleRAM` override — forces `share()` to soak surplus RAM even when the faction-manager isn't reporting an active grind. Has no effect while the EXP farm is on (the EXP farm wins).
+
+#### `tools/gang-train.js` — Force Gang Training
+```
+run src/tools/gang-train.js on     # every member trains
+run src/tools/gang-train.js off    # normal task assignment resumes
+run src/tools/gang-train.js        # toggle
+```
+Flips the `gangTrainNow` override (Port 5). While on, the gang-manager puts every member on Train Combat (Train Hacking for a hacking gang) ahead of every other task, and keeps recruiting, ascending and buying gear — no need to stop the manager to train. Stays on until turned off. Takes effect next cycle.
 
 #### `tools/manager-toggle.js` — Enable/Disable Daemon Managers
 ```
@@ -804,8 +846,6 @@ ns.writePort(5, JSON.stringify({
 | `hacknetBudgetPercent` | 0.1 | Max fraction of money to spend on hacknet per cycle |
 | `hashTargetUpgradesPerCycle` | 2 | Max purchases per cycle of each targeted hash upgrade (rest drained to money) |
 | `stockBudgetPercent` | 0.25 | Max fraction of money to invest in stocks per cycle |
-| `stockReservedCash` | 1e9 | Cash the stock trader will never touch. Also what keeps it dormant on a fresh BitNode — the budget is `max(0, money - reserve) * percent`, so it is exactly zero below the floor |
-| `stockMinCommissionRatio` | 0.01 | Largest share of a new position the commission may be. Raise it to trade more eagerly at worse prices; `Infinity` restores the old always-buy behaviour |
 | `batchSpacingMs` | 200 | Milliseconds between HWGW batch landing times |
 | `hwgwBatchWaves` | 4 | HWGW pipeline depth multiplier per target (tune with `hwgw-tune.js`) |
 | `hwgwMaxBatches` | 500 | Hard cap on HWGW batches per target per cycle |
@@ -813,6 +853,7 @@ ns.writePort(5, JSON.stringify({
 | `hwgwMinHackPercent` | 0.01 | Floor on the shrunken steal fraction. Below it, HWGW is declared infeasible for that target and prep/hack-income runs instead |
 | `xpFarmRAM` | false | Soak surplus RAM with the EXP farm instead of `share()` (toggle with `xp-farm.js`) |
 | `shareIdleRAM` | false | Force `share()` on surplus RAM even without an active faction grind (toggle with `share-idle.js`) |
+| `gangTrainNow` | false | Put every gang member on training ahead of every other task (toggle with `gang-train.js`) |
 | `disabledManagers` | `[]` | Manager ids the daemon won't launch (and will kill if running) — toggle with `manager-toggle.js` |
 
 ### Tuning Tips
@@ -821,7 +862,6 @@ ns.writePort(5, JSON.stringify({
 - **Aggressive hacking**: Raise the `hackPercent` ceiling to 0.9 (more money per batch — but see "Batch sizing" below: it only takes effect if the batch fits)
 - **Conservative hacking**: Set `hackPercent` to 0.1 (less money per batch, but very stable — good for stock manipulation)
 - **Stock-aware hacking**: Set `hackPercent` low when stock-trader is active to minimize market disruption
-- **Stock trader too passive**: Raise `stockMinCommissionRatio` (say 0.05) to accept fee-heavier entries, or lower `stockReservedCash` to free up surplus. Both make the per-symbol slice clear the gate sooner — at the cost of paying more of each position to the exchange
 - **Nothing dispatching on a rich target**: that's a sizing problem, not a RAM leak — see "Batch sizing" below and `hwgw-tune.js fit` / `min`
 
 ---
@@ -852,20 +892,6 @@ This makes the coordinator weaken-spam the best EXP/sec server with all leftover
 
 ### Stock trader exits immediately
 You need to purchase WSE Account and TIX API Access from the World Stock Exchange in-game. Total cost is approximately $30B.
-
-### Stock trader is running but buys nothing (or only 2-3 symbols)
-Usually the entry gate doing its job, not a fault. Run:
-```
-run src/tools/stock-report.js
-```
-The NEXT column shows `wait` while the gate is shut, and the summary names the cash figure it is saving toward — `saving — entries cost $100k in fees; holding until cash reaches $1.202b`.
-
-Two things bound how much it buys per cycle, and neither is a limit on available shares:
-
-- **At most 5 buys per cycle, structurally.** One symbol may take 20% of the cycle budget, and the cycle starts with 100% of it — so after five full slices there is nothing left.
-- **The budget is a slice of your *cash*, not your portfolio.** It is `(cash - $1b) x 25%`, then 20% of that per symbol — so 5% of whatever sits above the reserve. A $24b portfolio with $1.01b cash has only ~$12m in play.
-
-If you genuinely want it more aggressive, see the tuning tips above. `ns.stock.getMaxShares()` *is* a real per-symbol cap the trader respects, but it rarely binds before your wallet does.
 
 ### Advanced scripts exit with "API required" message
 These require specific Source Files. You unlock them by completing BitNodes:
