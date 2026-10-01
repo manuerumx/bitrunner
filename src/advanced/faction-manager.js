@@ -110,6 +110,22 @@ function holdCompanyJobs(ns) {
   }
 }
 
+// Start working for a faction, taking the first work type it offers.
+//
+// workForFaction does NOT throw when it can't start: it returns false — for a work type
+// the faction doesn't offer, and for every type when the faction is the player's gang
+// (a gang faction's reputation comes from the gang, never from working for it). The old
+// try/catch chain therefore never reached field or security work, and logged "Working
+// for" a faction it had failed to start.
+function startFactionWork(ns, faction) {
+  for (const workType of ["hacking", "field", "security"]) {
+    try {
+      if (ns.singularity.workForFaction(faction, workType, false)) return true;
+    } catch {}
+  }
+  return false;
+}
+
 /** @param {NS} ns */
 export async function main(ns) {
   ns.disableLog("ALL");
@@ -120,6 +136,13 @@ export async function main(ns) {
   }
 
   log(ns, "Faction Manager started");
+
+  // Factions that refused every work type, i.e. the gang faction. Left out of the ranking
+  // from then on: it would otherwise sit at the top of the list forever (a gang faction
+  // has dozens of augs) and block the grind for every faction below it. Kept inside main,
+  // not at module level — Bitburner shares module state between running instances.
+  /** @type {Set<string>} */
+  const unworkable = new Set();
 
   while (true) {
     const invitations = ns.singularity.checkFactionInvitations();
@@ -140,7 +163,7 @@ export async function main(ns) {
     const currentWork = ns.singularity.getCurrentWork();
     // Computed before the yield below: sleeves keep working factions while the player
     // grafts or runs the crime loop.
-    const pendingFactions = getPendingFactions(ns);
+    let pendingFactions = getPendingFactions(ns).filter((f) => !unworkable.has(f));
 
     // Never interrupt a graft. tools/grafting.js buys augmentations with money instead of
     // reputation — the very constraint this manager exists to grind against — and
@@ -161,7 +184,25 @@ export async function main(ns) {
       continue;
     }
 
-    const bestFaction = pendingFactions[0] ?? null;
+    // The best faction we can actually work: already on it, or it accepts the work now.
+    let bestFaction = null;
+    let justStarted = false;
+    for (const faction of pendingFactions) {
+      const alreadyOnIt = currentWork && currentWork.type === "FACTION" && currentWork.factionName === faction;
+      if (alreadyOnIt) {
+        bestFaction = faction;
+        break;
+      }
+      if (startFactionWork(ns, faction)) {
+        bestFaction = faction;
+        justStarted = true;
+        break;
+      }
+      unworkable.add(faction);
+      log(ns, `${faction} offers no work (gang faction?) — skipping it from now on`);
+    }
+    // Sleeves can't work those factions either.
+    pendingFactions = pendingFactions.filter((f) => !unworkable.has(f));
 
     if (bestFaction) {
       const augs = getAvailableAugs(ns, bestFaction);
@@ -171,21 +212,8 @@ export async function main(ns) {
         maxRepNeeded = Math.max(maxRepNeeded, repReq);
       }
 
-      // bestFaction is only returned while it still has augs needing rep, so always grind it.
-      const isWorkingForBest = currentWork && currentWork.type === "FACTION" && currentWork.factionName === bestFaction;
-      if (!isWorkingForBest) {
-        try {
-          ns.singularity.workForFaction(bestFaction, "hacking", false);
-          log(ns, `Working for ${bestFaction} (${augs.length} augs, need ${formatMoney(maxRepNeeded)} rep)`);
-        } catch {
-          try {
-            ns.singularity.workForFaction(bestFaction, "field", false);
-          } catch {
-            try {
-              ns.singularity.workForFaction(bestFaction, "security", false);
-            } catch {}
-          }
-        }
+      if (justStarted) {
+        log(ns, `Working for ${bestFaction} (${augs.length} augs, need ${formatMoney(maxRepNeeded)} rep)`);
       }
 
       /** @type {FactionStatus} */
