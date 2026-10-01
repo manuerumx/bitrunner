@@ -36,9 +36,7 @@ export async function main(ns) {
     return;
   }
 
-  // The 4S TIX API rung, not the 4S Market Data one — getForecast() below checks the former and
-  // throws on it. See the same gate in src/advanced/stock-trader.js.
-  const use4S = ns.stock.has4SDataTixApi();
+  const use4S = ns.stock.has4SData();
   const commission = ns.stock.getConstants().StockMarketCommission;
   const money = ns.getPlayer().money;
   const reserve = DEFAULTS.stockReservedCash;
