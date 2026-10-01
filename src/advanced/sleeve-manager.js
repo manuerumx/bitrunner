@@ -24,8 +24,8 @@ function hasSleeveAPI(ns) {
   }
 }
 
-// A faction or company the game refused (no work a sleeve can do, e.g. a gang faction, or
-// the player is working it right now) is skipped for this long before being tried again.
+// A faction or company the game refused (no work a sleeve can do, e.g. a gang faction) is
+// skipped for this long before being tried again.
 // Retrying every cycle would bounce the sleeve between the attempt and its fallback crime,
 // and each switch throws away the crime's progress.
 const WORK_RETRY_MS = 5 * 60 * 1000;
@@ -47,7 +47,7 @@ function isInGang(ns) {
 
 /**
  * Try each faction work type until the game accepts one. setToFactionWork returns false
- * for a work type the faction doesn't offer, and throws when another sleeve or the player
+ * for a work type the faction doesn't offer, and throws when another sleeve
  * already works that faction.
  *
  * @param {NS} ns

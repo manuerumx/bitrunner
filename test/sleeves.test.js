@@ -276,11 +276,11 @@ test("factionWorkOrder uses the published pending-augment factions, best first",
   assert.deepEqual(factionWorkOrder(["CyberSec", "Tian Di Hui", "NiteSec"], status), ["NiteSec", "CyberSec"]);
 });
 
-// The game rejects a sleeve on the faction the player is working, and a rejection costs
-// the sleeve a retry window, so that faction is dropped up front.
-test("factionWorkOrder leaves out the faction the player is working", () => {
+// The game only forbids two sleeves on one faction. The player's faction is the
+// top-priority one, so a sleeve works it alongside the player.
+test("factionWorkOrder keeps the faction the player is working", () => {
   const status = { currentFaction: "NiteSec", pendingFactions: ["NiteSec", "CyberSec"] };
-  assert.deepEqual(factionWorkOrder(["CyberSec", "NiteSec"], status), ["CyberSec"]);
+  assert.deepEqual(factionWorkOrder(["CyberSec", "NiteSec"], status), ["NiteSec", "CyberSec"]);
 });
 
 test("factionWorkOrder drops published factions the player is no longer in", () => {

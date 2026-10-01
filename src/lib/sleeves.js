@@ -156,18 +156,19 @@ export function chooseSleeveTask(sleeve, ctx) {
  *
  * advanced/faction-manager.js publishes the factions that still have augmentations needing
  * reputation; rep earned anywhere else buys nothing, so those are the only ones handed out.
- * The faction the player is working is left out, because the game rejects a sleeve there.
+ * The faction the player is working stays in: the game only forbids two SLEEVES on one
+ * faction, and the player's pick is the top-priority one, so it gets a sleeve as well.
  * With no published list (faction manager disabled) every joined faction is offered, most
  * recently joined first, which is usually the one whose augmentations are next.
  *
  * @param {string[]} joined  player.factions
- * @param {{currentFaction?: string | null, pendingFactions?: string[]} | null} status
+ * @param {{pendingFactions?: string[]} | null} status
  *   FACTION_STATUS port payload
  * @returns {string[]}
  */
 export function factionWorkOrder(joined, status) {
   if (!status || !Array.isArray(status.pendingFactions)) return [...joined].reverse();
-  return status.pendingFactions.filter((f) => joined.includes(f) && f !== status.currentFaction);
+  return status.pendingFactions.filter((f) => joined.includes(f));
 }
 
 /**
