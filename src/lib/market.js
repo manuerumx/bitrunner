@@ -258,3 +258,241 @@ export function momentumSignal(samples, { minSamples = 10, buyThreshold = 0.05, 
   if (change <= -sellThreshold) return "sell";
   return null;
 }
+
+// ── Long/short trading (BitNode-8) ──────────────────────────────────────────
+//
+// BN8 starts with $250m and makes hacking, and most other income, worthless, so the market
+// is the whole economy. stock-trader.js is built to share cash with other managers — a
+// reserve, a per-cycle percentage, a per-symbol slice — which here is just money left idle.
+// These helpers back stock-trader-bn8.js, which stays fully invested on both sides.
+
+/**
+ * Signed expected price move per tick, as a fraction of price.
+ *
+ * Each tick a stock moves by up to `volatility` in a direction that is up with probability
+ * `forecast`, so the mean move is volatility × (2·forecast − 1). The factor of 2 is dropped
+ * because only the ordering matters. Forecast alone can't compare a 0.62 calm stock with a
+ * 0.58 volatile one; this can.
+ *
+ * @param {number} forecast   ns.stock.getForecast()
+ * @param {number} volatility ns.stock.getVolatility()
+ */
+export function expectedReturn(forecast, volatility) {
+  return volatility * (forecast - 0.5);
+}
+
+/**
+ * Which side to open, if any. `margin` is the dead band around 0.5: inside it the forecast
+ * is too close to a coin flip to pay two commissions for, and the game's forecast drifts
+ * back and forth across 0.5 often enough that a narrow band churns.
+ *
+ * @param {number} forecast
+ * @param {number} margin
+ * @returns {"L" | "S" | null}
+ */
+export function entrySide(forecast, margin) {
+  if (forecast >= 0.5 + margin) return "L";
+  if (forecast <= 0.5 - margin) return "S";
+  return null;
+}
+
+/**
+ * Which held side has turned against us. With 4S the forecast is the per-tick probability
+ * of an uptick, so a long below 0.5 or a short above it is negative expected value — the
+ * same authoritative exit stock-trader.js uses (see worthTrading).
+ *
+ * Without 4S the forecast is estimated over a long window, which lags a market-cycle flip
+ * by half the window. `recent` is the same estimate over a short window: noisier, so it
+ * only forces an exit once it is past 0.5 by `flipMargin`. With 4S both default to the
+ * real forecast and the extra check is a no-op.
+ *
+ * @param {{forecast: number, longShares: number, shortShares: number,
+ *   recent?: number, flipMargin?: number}} input
+ * @returns {"L" | "S" | null}
+ */
+export function exitSide({ forecast, longShares, shortShares, recent = forecast, flipMargin = 0 }) {
+  if (longShares > 0 && (forecast < 0.5 || recent < 0.5 - flipMargin)) return "L";
+  if (shortShares > 0 && (forecast > 0.5 || recent > 0.5 + flipMargin)) return "S";
+  return null;
+}
+
+/**
+ * Forecast estimated from price history: the fraction of up-moves among the last `window`
+ * moves. The forecast is the per-tick probability of an uptick, so this converges on it —
+ * slowly: over 60 moves the estimate's standard error is about ±0.065, which is why the
+ * no-4S entry band is wider than the 4S one. Flat ticks carry no direction and are skipped.
+ *
+ * @param {number[] | undefined} samples prices, oldest → newest, one per market tick
+ * @param {number} window                how many recent moves to consider
+ * @returns {number | null} null until at least one non-flat move is in the window
+ */
+export function estimateForecast(samples, window) {
+  if (!samples || samples.length < 2) return null;
+  let ups = 0;
+  let moves = 0;
+  for (let i = Math.max(1, samples.length - window); i < samples.length; i++) {
+    if (samples[i] > samples[i - 1]) ups++;
+    if (samples[i] !== samples[i - 1]) moves++;
+  }
+  return moves > 0 ? ups / moves : null;
+}
+
+/**
+ * Volatility estimated from price history: the mean absolute relative move per tick over
+ * the last `window` moves. Only used to rank, so its scale matching getVolatility() exactly
+ * does not matter.
+ *
+ * @param {number[] | undefined} samples
+ * @param {number} window
+ */
+export function estimateVolatility(samples, window) {
+  if (!samples || samples.length < 2) return 0;
+  let sum = 0;
+  let n = 0;
+  for (let i = Math.max(1, samples.length - window); i < samples.length; i++) {
+    if (samples[i - 1] > 0) {
+      sum += Math.abs(samples[i] - samples[i - 1]) / samples[i - 1];
+      n++;
+    }
+  }
+  return n > 0 ? sum / n : 0;
+}
+
+/**
+ * Shares still purchasable on a symbol. The game caps long + short together, not each side
+ * separately: a buy is rejected when shares + long + short exceeds maxShares.
+ *
+ * @param {{maxShares: number, longShares: number, shortShares: number}} input
+ */
+export function shareHeadroom({ maxShares, longShares, shortShares }) {
+  return Math.max(0, maxShares - longShares - shortShares);
+}
+
+/**
+ * Candidates ordered by size of expected move, long or short alike.
+ *
+ * @template {{forecast: number, volatility: number}} T
+ * @param {T[]} candidates
+ * @returns {T[]} a new array; the input is not mutated
+ */
+export function rankByExpectedReturn(candidates) {
+  const strength = (/** @type {T} */ c) => Math.abs(expectedReturn(c.forecast, c.volatility));
+  return [...candidates].sort((a, b) => strength(b) - strength(a));
+}
+
+/**
+ * The holding to sell so cash can move into a better candidate, or null to stay put.
+ *
+ * Fully invested means a new opportunity can only be funded by closing something. A swap
+ * costs two commissions plus the spread on both legs, so the candidate has to beat the
+ * weakest holding by `factor`, not merely edge past it, or the trader churns between two
+ * near-identical stocks. Magnitudes are compared because a short's return is negative.
+ *
+ * @template {{er: number}} T
+ * @param {{held: T[], candidateEr: number, factor: number}} input
+ * @returns {T | null}
+ */
+export function pickRotation({ held, candidateEr, factor }) {
+  let weakest = null;
+  for (const h of held) {
+    if (!weakest || Math.abs(h.er) < Math.abs(weakest.er)) weakest = h;
+  }
+  if (!weakest) return null;
+  return Math.abs(candidateEr) > Math.abs(weakest.er) * factor ? weakest : null;
+}
+
+/**
+ * How much more a symbol may take: its cap is `fraction` of net worth, less what it
+ * already holds, never more than the cash on hand.
+ *
+ * Without it the BN8 trader sank its whole bankroll into the single top-ranked symbol. The
+ * cap is measured against net worth rather than cash because a fully invested portfolio
+ * has almost no cash — a cash-based cap would stop every position growing with it.
+ *
+ * @param {{netWorth: number, fraction: number, held: number, cash: number}} input
+ * @returns {number} spendable on this symbol, never negative
+ */
+export function positionRoom({ netWorth, fraction, held, cash }) {
+  return Math.max(0, Math.min(cash, netWorth * fraction - held));
+}
+
+// Per-symbol price history saved by stock-trader-bn8.js each tick, so a restart can resume
+// trading instead of re-collecting a warm-up window. JSON: {savedAt: ms, history: {sym: number[]}}.
+export const STOCK_HISTORY_FILE = "/data/stock-history.txt";
+
+/**
+ * Restore saved price history, or {} if there is nothing usable.
+ *
+ * Without 4S every restart cost ~31 ticks (~3 min) of warm-up with the bankroll idle. A
+ * save is only trusted while it is fresh: the ticks missed while stopped collapse into a
+ * single move in the window, and an old window can straddle a market-cycle flip, which
+ * would make the restored estimate wrong in exactly the way the warm-up exists to prevent.
+ *
+ * @param {string | null | undefined} raw ns.read() of STOCK_HISTORY_FILE
+ * @param {{now: number, maxAgeMs: number, windowSize: number}} opts
+ * @returns {Record<string, number[]>}
+ */
+export function parseStockHistory(raw, { now, maxAgeMs, windowSize }) {
+  if (!raw) return {};
+  let parsed;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return {};
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+  const { savedAt, history } = parsed;
+  if (typeof savedAt !== "number" || savedAt > now || now - savedAt > maxAgeMs) return {};
+  if (!history || typeof history !== "object" || Array.isArray(history)) return {};
+
+  /** @type {Record<string, number[]>} */
+  const out = {};
+  for (const [sym, samples] of Object.entries(history)) {
+    if (!Array.isArray(samples) || !samples.every((p) => typeof p === "number" && p > 0 && Number.isFinite(p))) continue;
+    out[sym] = samples.slice(-windowSize);
+  }
+  return out;
+}
+
+/**
+ * Cash another script has asked the trader to hold back, or 0.
+ *
+ * The BN8 trader stays fully invested, so a buyer that needs a lump sum (tools/grafting.js
+ * queue mode) posts a CashRequest on PORTS.CASH_REQUEST and refreshes it while it waits.
+ * It is a heartbeat rather than a flag: a requester that dies stops refreshing, and its
+ * request lapses after `maxAgeMs` instead of freezing that capital for the rest of the run.
+ *
+ * @param {unknown} request readPortData(ns, PORTS.CASH_REQUEST)
+ * @param {{now: number, maxAgeMs: number}} opts
+ */
+export function activeCashRequest(request, { now, maxAgeMs }) {
+  if (!request || typeof request !== "object") return 0;
+  const { amount, updatedAt } = /** @type {{amount?: unknown, updatedAt?: unknown}} */ (request);
+  if (typeof amount !== "number" || !(amount > 0) || typeof updatedAt !== "number") return 0;
+  return now - updatedAt <= maxAgeMs ? amount : 0;
+}
+
+/**
+ * What to sell to raise `need`, weakest expected move first, the last holding only in part.
+ *
+ * Used to cover a cash request. Weakest-first gives up the least expected return per dollar
+ * raised; selling a fraction of the last one avoids dumping a strong position to raise a
+ * sliver. Values are net sale proceeds (getSaleGain), so selling `fraction` of a holding's
+ * shares raises about `fraction × value`.
+ *
+ * @param {{held: Array<{sym: string, er: number, value: number}>, need: number}} input
+ * @returns {Array<{sym: string, fraction: number}>}
+ */
+export function planLiquidation({ held, need }) {
+  /** @type {Array<{sym: string, fraction: number}>} */
+  const plan = [];
+  let left = need;
+  for (const h of [...held].sort((a, b) => Math.abs(a.er) - Math.abs(b.er))) {
+    if (left <= 0) break;
+    if (!(h.value > 0)) continue;
+    const fraction = Math.min(1, left / h.value);
+    plan.push({ sym: h.sym, fraction });
+    left -= fraction * h.value;
+  }
+  return plan;
+}

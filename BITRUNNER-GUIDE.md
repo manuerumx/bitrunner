@@ -215,6 +215,18 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 - **Access**: `tools/market-access.js` buys the WSE → TIX → 4S → 4S TIX ladder for it. The `hasTixApiAccess()` / `has4SData()` probes (0.05 GB each) replaced try/catch guesswork.
 - **Supports**: Long positions always. Short positions if SF-8 is unlocked.
 
+#### `advanced/stock-trader-bn8.js` — Long/Short Trader for BitNode-8
+- **Requires**: TIX API (BN8 starts with it). Shorts need BitNode-8 or SF-8.2 (falls back to longs only on the first rejected short).
+- **Forecasts**: without the 4S Market Data TIX API there is no `getForecast()`, so each symbol's forecast is estimated as the fraction of up-ticks over its last 60 ticks, and volatility as the mean absolute move. Nothing trades until a symbol has 30 ticks of history (~3 min after start); positions held from before a restart are kept, not sold blind. The 60-tick estimate lags a market-cycle flip, so a 15-tick estimate that has swung to ≤0.30 (long) or ≥0.70 (short) forces an early exit, and an entry is skipped when the 15-tick estimate already disagrees. Once `has4SDataTixApi()` turns true it switches to the real forecast and volatility mid-run. The price history is saved to `/data/stock-history.txt` every tick; a restart within 2 minutes of the last save restores it and trades on its first tick (the tail logs `RESTORED n ticks…`). An older save is ignored and the warm-up runs as normal, because the missed ticks merge into one move and an old window can straddle a market-cycle flip.
+- **Run by hand**: `run /src/advanced/stock-trader-bn8.js`. On start it disables the daemon's `stock` manager and kills `stock-trader.js` so the two don't trade against each other. Re-enable later with `run /src/tools/manager-toggle.js on stock`.
+- **Why a separate script**: in BN8 the market is the only income. `stock-trader.js` holds back `stockReservedCash` ($1b) and spends 25% of the rest per cycle, so at BN8's $250m start it never places a trade.
+- **Cycle**: wakes on `ns.stock.nextUpdate()`, the actual market tick.
+- **Strategy**: fully invested. Closes a long when the forecast drops below 50% and a short when it rises above 50%. Opens on forecasts ≥ 0.5 + `--margin` (long) or ≤ 0.5 − `--margin` (short; margin defaults to 0.10 estimated, 0.05 with 4S), ranked by expected move per tick (volatility × (forecast − 0.5)), so a volatile 0.40 short can outrank a calm 0.65 long. Once cash runs out, a candidate whose expected move is `--rotate`× the weakest holding's replaces it. A symbol never holds both sides, because the game caps long + short shares together.
+- **Funds grafts**: honours a cash request from `tools/grafting.js queue` by holding that amount back, pausing buys, and selling the weakest holdings until it's covered (`FUND` lines in the tail). Publishes net worth on `PORTS.STOCK_STATUS` every tick.
+- **Position cap**: no symbol holds more than `--max-position` of net worth (default 0.25). A position that grows past 1.2× the cap is trimmed back to it — this also cuts down anything opened before the cap existed.
+- **Flags**: `--reserve <cash>` (default 0), `--margin <0..0.5>` (default auto: 0.10 / 0.05), `--rotate <factor>` (default 2), `--min-order <cash>` (default 50 × commission), `--max-position <0..1>` (default 0.25).
+- **Tail window**: net worth, realized P/L for the run, forecast mode and warm-up progress, every open position with value / P/L / forecast, and the last 12 trades.
+
 #### `advanced/faction-manager.js` — Faction Work Automation
 - **Requires**: Source-File 4 (Singularity API)
 - **Cycle**: Every 30 seconds
@@ -501,6 +513,8 @@ All four are launched by the daemon and all four **exit instead of looping** —
 run src/tools/grafting.js              # what you can afford to graft right now
 run src/tools/grafting.js graft        # graft the cheapest affordable augmentation
 run src/tools/grafting.js graft <name> # graft a specific one (exact name)
+run src/tools/grafting.js queue        # graft one after another, cheapest first
+run src/tools/grafting.js queue --skip-hacking --max-share 0.25
 ```
 Grafting buys an augmentation for **money alone — no faction reputation** — which is precisely the
 constraint `faction-manager.js` spends its entire cycle grinding against. That makes it the
@@ -517,6 +531,22 @@ own but doesn't check prerequisites, and `singularity.getAugmentationPrereq` cos
 `graftAugmentation()` returns false for an unmet prerequisite, which is the same answer for free.
 NeuroFlux Governor is never grafted — its price escalation drags the whole catalogue up with it,
 the same trap `augmentation-buyer.js` defers for.
+
+**Queue mode** grafts the cheapest eligible augmentation, waits for it to finish, and moves on. It
+stops when nothing left costs under `--max-share` of net worth (default 25%), or when a graft is
+cancelled — that means you started other work, and grafting over it would undo your choice. A
+refused graft (unmet prerequisite) is skipped, not retried. Restarting it lets a running graft
+finish first. `--skip-hacking` leaves out augmentations whose every effect is a hacking or hacknet
+multiplier (worthless in BitNode-8); augmentations with no multipliers at all are special-effect
+ones and are kept. That check needs `getAugmentationStats` (80 GB at SF-4.1), so it runs once in
+`tools/graft-stats-worker.js` instead of costing the queue that RAM for hours.
+
+**With the BN8 trader**: `advanced/stock-trader-bn8.js` keeps cash near zero, so the queue sizes
+grafts against the net worth the trader publishes on `PORTS.STOCK_STATUS`, then posts a
+`CashRequest` on `PORTS.CASH_REQUEST` (refreshed every 3 s). The trader holds that amount back,
+pauses buying, and sells its weakest holdings — partially for the last one — until the cash is
+there. A request not refreshed for 30 s lapses, so a killed queue never freezes the trader's
+capital. Without the trader running, the queue says so and waits for cash to accumulate.
 
 #### `tools/crime.js` — Crime Income and Karma (SF-4)
 ```

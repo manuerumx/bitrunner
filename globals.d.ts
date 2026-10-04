@@ -58,6 +58,21 @@ declare global {
     funds: number;
     divisions: number;
   }
+  // Published every tick by advanced/stock-trader-bn8.js on PORTS.STOCK_STATUS. Read by
+  // tools/grafting.js to size grafts against net worth, since the trader keeps cash near 0.
+  interface StockStatus {
+    netWorth: number;
+    cash: number;
+    updatedAt: number;
+  }
+  // Posted on PORTS.CASH_REQUEST by a script that needs a lump sum (tools/grafting.js queue)
+  // and refreshed while it waits; the BN8 trader holds that much back and sells to cover it.
+  // A request not refreshed within the trader's max age lapses.
+  interface CashRequest {
+    requester: string;
+    amount: number;
+    updatedAt: number;
+  }
   interface BladeburnerStatus {
     rank: number;
     action: string;

@@ -13,6 +13,8 @@ export const PORTS = {
   DNET_PROBE: 12,
   DNET_CRACK: 13,
   GO_CHEAT: 14,
+  // A lump sum another script needs the stock trader to free up (tools/grafting.js queue).
+  CASH_REQUEST: 15,
 };
 
 // Single source of truth for the daemon's manager roster, shared with tools/manager-toggle.js so

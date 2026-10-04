@@ -1,13 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  activeCashRequest,
+  entrySide,
+  estimateForecast,
+  estimateVolatility,
+  exitSide,
+  expectedReturn,
   fitSharesToBudget,
   momentumSignal,
+  parseStockHistory,
   portfolioStats,
   positionSlice,
   planMarketUnlocks,
+  pickRotation,
+  planLiquidation,
+  positionRoom,
   pushSample,
   rankByConviction,
+  rankByExpectedReturn,
+  shareHeadroom,
   stockBudget,
   worthTrading,
 } from "/src/lib/market.js";
@@ -347,4 +359,273 @@ test("portfolioStats ignores cash below the reserve as uninvestable", () => {
   const stats = portfolioStats({ positions: [{ sym: "A", value: 100 }], cash: 500, reserve: 900 });
   assert.equal(stats.investable, 100);
   assert.equal(stats.deployed, 1);
+});
+
+// ── long/short helpers (BitNode-8 trader) ───────────────────────────────────
+//
+// In BN8 the market is the only income, so the trader is fully invested on both sides and
+// has to choose between a 0.62 long on a sleepy stock and a 0.40 short on a volatile one.
+// Forecast alone can't rank those; expected move per tick (volatility × edge) can.
+
+test("expectedReturn is positive for a bullish forecast and negative for a bearish one", () => {
+  assert.ok(expectedReturn(0.6, 0.02) > 0);
+  assert.ok(expectedReturn(0.4, 0.02) < 0);
+  assert.equal(expectedReturn(0.5, 0.02), 0);
+});
+
+test("expectedReturn scales with volatility, so a volatile weak edge can beat a calm strong one", () => {
+  // 0.58 at 4% volatility moves more per tick than 0.65 at 1%.
+  assert.ok(Math.abs(expectedReturn(0.58, 0.04)) > Math.abs(expectedReturn(0.65, 0.01)));
+});
+
+test("entrySide goes long above the band, short below it, and stays out inside it", () => {
+  assert.equal(entrySide(0.6, 0.05), "L");
+  assert.equal(entrySide(0.4, 0.05), "S");
+  assert.equal(entrySide(0.53, 0.05), null);
+  assert.equal(entrySide(0.47, 0.05), null);
+});
+
+test("exitSide closes a long once the forecast turns bearish", () => {
+  assert.equal(exitSide({ forecast: 0.48, longShares: 100, shortShares: 0 }), "L");
+  assert.equal(exitSide({ forecast: 0.52, longShares: 100, shortShares: 0 }), null);
+});
+
+test("exitSide closes a short once the forecast turns bullish", () => {
+  assert.equal(exitSide({ forecast: 0.52, longShares: 0, shortShares: 100 }), "S");
+  assert.equal(exitSide({ forecast: 0.48, longShares: 0, shortShares: 100 }), null);
+});
+
+test("exitSide does nothing for a symbol with no position", () => {
+  assert.equal(exitSide({ forecast: 0.1, longShares: 0, shortShares: 0 }), null);
+  assert.equal(exitSide({ forecast: 0.9, longShares: 0, shortShares: 0 }), null);
+});
+
+test("shareHeadroom counts both sides against one cap", () => {
+  // The game rejects a buy when shares + long + short exceeds maxShares.
+  assert.equal(shareHeadroom({ maxShares: 1000, longShares: 300, shortShares: 0 }), 700);
+  assert.equal(shareHeadroom({ maxShares: 1000, longShares: 0, shortShares: 1000 }), 0);
+});
+
+test("rankByExpectedReturn puts the biggest move first, long or short", () => {
+  const ranked = rankByExpectedReturn([
+    { sym: "CALM", forecast: 0.7, volatility: 0.005 },
+    { sym: "BEAR", forecast: 0.35, volatility: 0.03 },
+    { sym: "BULL", forecast: 0.6, volatility: 0.02 },
+  ]);
+  assert.deepEqual(ranked.map((c) => c.sym), ["BEAR", "BULL", "CALM"]);
+});
+
+test("rankByExpectedReturn does not mutate its input", () => {
+  const input = [
+    { sym: "A", forecast: 0.55, volatility: 0.01 },
+    { sym: "B", forecast: 0.8, volatility: 0.01 },
+  ];
+  rankByExpectedReturn(input);
+  assert.deepEqual(input.map((c) => c.sym), ["A", "B"]);
+});
+
+test("pickRotation sells the weakest holding when a candidate is clearly better", () => {
+  const held = [
+    { sym: "OK", er: 0.004 },
+    { sym: "WEAK", er: 0.001 },
+  ];
+  assert.equal(pickRotation({ held, candidateEr: 0.005, factor: 2 })?.sym, "WEAK");
+});
+
+test("pickRotation keeps the portfolio when the candidate is not worth two commissions of churn", () => {
+  const held = [{ sym: "WEAK", er: 0.003 }];
+  assert.equal(pickRotation({ held, candidateEr: 0.005, factor: 2 }), null);
+});
+
+test("pickRotation compares magnitudes, so a short's negative return is not mistaken for weakness", () => {
+  const held = [{ sym: "SHORT", er: -0.004 }];
+  assert.equal(pickRotation({ held, candidateEr: 0.005, factor: 2 }), null);
+  assert.equal(pickRotation({ held, candidateEr: -0.009, factor: 2 })?.sym, "SHORT");
+});
+
+test("pickRotation with nothing held has nothing to sell", () => {
+  assert.equal(pickRotation({ held: [], candidateEr: 0.01, factor: 2 }), null);
+});
+
+// ── forecast estimation without 4S ──────────────────────────────────────────
+//
+// BN8 starts with the TIX API but not 4S, so there is no getForecast(). The forecast is
+// the per-tick probability of an uptick, which makes the observed fraction of up-ticks
+// over a window an unbiased estimate of it.
+
+test("estimateForecast is the fraction of up-moves over the window", () => {
+  // 3 ups, 1 down
+  assert.equal(estimateForecast([10, 11, 12, 11, 12], 4), 0.75);
+});
+
+test("estimateForecast only looks at the last `window` moves", () => {
+  // Early ups fall outside the window; the last 2 moves are both down.
+  assert.equal(estimateForecast([1, 2, 3, 4, 3, 2], 2), 0);
+});
+
+test("estimateForecast ignores flat ticks rather than counting them as down", () => {
+  assert.equal(estimateForecast([10, 10, 11, 11, 12], 4), 1);
+});
+
+test("estimateForecast returns null without enough history", () => {
+  assert.equal(estimateForecast([10], 4), null);
+  assert.equal(estimateForecast(undefined, 4), null);
+  assert.equal(estimateForecast([10, 10, 10], 4), null);
+});
+
+test("estimateVolatility is the mean absolute relative move", () => {
+  // +10%, -10%
+  const v = estimateVolatility([100, 110, 99], 2);
+  assert.ok(Math.abs(v - 0.1) < 1e-9);
+});
+
+test("estimateVolatility returns 0 without at least one move", () => {
+  assert.equal(estimateVolatility([100], 5), 0);
+});
+
+test("exitSide closes a long early when the recent window flips hard", () => {
+  // The long window still says bullish (it lags a cycle flip), but the recent window
+  // has turned well past the flip margin.
+  assert.equal(exitSide({ forecast: 0.56, recent: 0.3, flipMargin: 0.1, longShares: 10, shortShares: 0 }), "L");
+  assert.equal(exitSide({ forecast: 0.56, recent: 0.45, flipMargin: 0.1, longShares: 10, shortShares: 0 }), null);
+});
+
+test("exitSide closes a short early when the recent window flips hard", () => {
+  assert.equal(exitSide({ forecast: 0.44, recent: 0.7, flipMargin: 0.1, longShares: 0, shortShares: 10 }), "S");
+  assert.equal(exitSide({ forecast: 0.44, recent: 0.55, flipMargin: 0.1, longShares: 0, shortShares: 10 }), null);
+});
+
+// ── positionRoom ────────────────────────────────────────────────────────────
+//
+// Uncapped, the BN8 trader put 100% of a $240m bankroll into a single short — the top of
+// the ranking — so one wrong estimate was the whole portfolio. The cap is a share of net
+// worth, not of cash: cash is ~0 once fully invested, which would freeze every top-up.
+
+test("positionRoom lets a new position take up to its share of net worth", () => {
+  assert.equal(positionRoom({ netWorth: 1000, fraction: 0.25, held: 0, cash: 1000 }), 250);
+});
+
+test("positionRoom only tops up what is left under the cap", () => {
+  assert.equal(positionRoom({ netWorth: 1000, fraction: 0.25, held: 200, cash: 1000 }), 50);
+});
+
+test("positionRoom is zero for a position already at or over the cap", () => {
+  assert.equal(positionRoom({ netWorth: 1000, fraction: 0.25, held: 300, cash: 1000 }), 0);
+});
+
+test("positionRoom never exceeds the cash on hand", () => {
+  assert.equal(positionRoom({ netWorth: 1000, fraction: 0.25, held: 0, cash: 40 }), 40);
+});
+
+// ── parseStockHistory ───────────────────────────────────────────────────────
+//
+// Without 4S the BN8 trader needs ~31 ticks of prices per symbol before it trades, so every
+// restart left the bankroll idle for 3 minutes ($198m in the run that prompted this). The
+// history is saved each tick and restored on start — but only while it is fresh: the ticks
+// missed while stopped collapse into one move, and a stale window can straddle a flip.
+
+const MIN = 60_000;
+const saved = (savedAt, history) => JSON.stringify({ savedAt, history });
+
+test("parseStockHistory restores a fresh save", () => {
+  const raw = saved(1000, { ECP: [1, 2, 3], FSIG: [5, 4] });
+  assert.deepEqual(parseStockHistory(raw, { now: 1000 + MIN, maxAgeMs: 2 * MIN, windowSize: 10 }), {
+    ECP: [1, 2, 3],
+    FSIG: [5, 4],
+  });
+});
+
+test("parseStockHistory discards a save older than maxAgeMs", () => {
+  const raw = saved(1000, { ECP: [1, 2, 3] });
+  assert.deepEqual(parseStockHistory(raw, { now: 1000 + 3 * MIN, maxAgeMs: 2 * MIN, windowSize: 10 }), {});
+});
+
+test("parseStockHistory trims each symbol to the window", () => {
+  const raw = saved(0, { ECP: [1, 2, 3, 4, 5] });
+  assert.deepEqual(parseStockHistory(raw, { now: 0, maxAgeMs: MIN, windowSize: 3 }), { ECP: [3, 4, 5] });
+});
+
+test("parseStockHistory drops symbols whose samples are not all positive numbers", () => {
+  const raw = saved(0, { ECP: [1, "x", 3], FSIG: [1, -2], OK: [2, 3] });
+  assert.deepEqual(parseStockHistory(raw, { now: 0, maxAgeMs: MIN, windowSize: 10 }), { OK: [2, 3] });
+});
+
+test("parseStockHistory returns empty for a missing or corrupt file", () => {
+  const opts = { now: 0, maxAgeMs: MIN, windowSize: 10 };
+  assert.deepEqual(parseStockHistory("", opts), {});
+  assert.deepEqual(parseStockHistory("{not json", opts), {});
+  assert.deepEqual(parseStockHistory(JSON.stringify({ history: { ECP: [1, 2] } }), opts), {});
+  assert.deepEqual(parseStockHistory(JSON.stringify([1, 2]), opts), {});
+});
+
+test("parseStockHistory rejects a save from the future", () => {
+  // A clock that went backwards (or a hand-edited file) must not count as fresh forever.
+  const raw = saved(10 * MIN, { ECP: [1, 2] });
+  assert.deepEqual(parseStockHistory(raw, { now: 0, maxAgeMs: MIN, windowSize: 10 }), {});
+});
+
+// ── cash requests (grafting ↔ BN8 trader) ───────────────────────────────────
+//
+// The BN8 trader stays fully invested, so the grafting queue would never see enough cash.
+// The queue posts a request; the trader holds that much back and sells to cover it. The
+// request is a heartbeat: a grafting script that died must not freeze capital forever.
+
+test("activeCashRequest honours a fresh request", () => {
+  assert.equal(activeCashRequest({ requester: "graft", amount: 5e9, updatedAt: 1000 }, { now: 11_000, maxAgeMs: 30_000 }), 5e9);
+});
+
+test("activeCashRequest ignores a stale request", () => {
+  assert.equal(activeCashRequest({ requester: "graft", amount: 5e9, updatedAt: 1000 }, { now: 60_000, maxAgeMs: 30_000 }), 0);
+});
+
+test("activeCashRequest ignores a missing or malformed request", () => {
+  const opts = { now: 0, maxAgeMs: 30_000 };
+  assert.equal(activeCashRequest(null, opts), 0);
+  assert.equal(activeCashRequest({ amount: "lots", updatedAt: 0 }, opts), 0);
+  assert.equal(activeCashRequest({ amount: -5, updatedAt: 0 }, opts), 0);
+});
+
+test("planLiquidation sells the weakest holdings first", () => {
+  const plan = planLiquidation({
+    held: [
+      { sym: "STRONG", er: 0.004, value: 100 },
+      { sym: "WEAK", er: 0.001, value: 100 },
+    ],
+    need: 100,
+  });
+  assert.deepEqual(plan, [{ sym: "WEAK", fraction: 1 }]);
+});
+
+test("planLiquidation sells only part of the last holding it needs", () => {
+  const plan = planLiquidation({
+    held: [
+      { sym: "A", er: 0.001, value: 100 },
+      { sym: "B", er: 0.002, value: 200 },
+    ],
+    need: 150,
+  });
+  assert.deepEqual(plan, [
+    { sym: "A", fraction: 1 },
+    { sym: "B", fraction: 0.25 },
+  ]);
+});
+
+test("planLiquidation treats a short's negative return by magnitude", () => {
+  const plan = planLiquidation({
+    held: [
+      { sym: "SHORT", er: -0.005, value: 100 },
+      { sym: "LONG", er: 0.001, value: 100 },
+    ],
+    need: 50,
+  });
+  assert.deepEqual(plan, [{ sym: "LONG", fraction: 0.5 }]);
+});
+
+test("planLiquidation sells everything when the need exceeds the portfolio", () => {
+  const plan = planLiquidation({ held: [{ sym: "A", er: 0.001, value: 100 }], need: 500 });
+  assert.deepEqual(plan, [{ sym: "A", fraction: 1 }]);
+});
+
+test("planLiquidation sells nothing when nothing is needed", () => {
+  assert.deepEqual(planLiquidation({ held: [{ sym: "A", er: 0.001, value: 100 }], need: 0 }), []);
 });
