@@ -18,6 +18,7 @@ declare global {
   type FactionName = Parameters<NS["sleeve"]["setToFactionWork"]>[1];
   type GymType = Parameters<NS["sleeve"]["setToGymWorkout"]>[2];
   type CrimeType = Parameters<NS["sleeve"]["setToCommitCrime"]>[1];
+  type CompanyName = Parameters<NS["sleeve"]["setToCompanyWork"]>[1];
   type HacknetServerHashUpgrade = Parameters<NS["hacknet"]["spendHashes"]>[0];
   type GoOpponent = Parameters<NS["go"]["resetBoardState"]>[0];
   type BladeburnerCityName = Parameters<NS["bladeburner"]["switchCity"]>[0];
@@ -38,6 +39,9 @@ declare global {
     rep: number;
     targetRep: number;
     availableAugs: number;
+    // Joined factions with augmentations still needing reputation, best first. Read by
+    // sleeve-manager.js to decide where sleeves work. Optional: absent on a stale payload.
+    pendingFactions?: string[];
   }
   interface GangStatus {
     members: number;

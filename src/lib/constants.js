@@ -122,6 +122,11 @@ export const DEFAULTS = {
   // 33 maximizes exp for any run of ~31 h or more and is within ~4% of best at 24 h.
   // Recovering to 0 is never optimal; 97 (common advice) loses ~30-45%.
   sleeveWorkShock: 33,
+  // A sleeve only ranks crimes it lands at least this often; below it for every crime, it
+  // runs whichever is likeliest and trains up. Without a floor, karma ranking parks a weak
+  // sleeve on Homicide at ~1%. Lower it to reach Homicide sooner (0.5 needs ~98 in each
+  // combat stat) at the price of more failed attempts.
+  sleeveCrimeMinChance: 0.5,
   // Gang equipment per 10 s cycle, across the whole roster. Without a cap every member
   // tested every item against the same start-of-cycle cash figure, so one cycle could
   // spend many multiples of it. Each item must also cost under 1% of cash.

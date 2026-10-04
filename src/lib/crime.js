@@ -52,6 +52,87 @@ export const CRIME_KARMA = {
 };
 
 /**
+ * Base money per successful attempt. Only used to RANK crimes: the player's crime_money
+ * multiplier and the BitNode's scale every crime alike, so they cannot reorder the list.
+ * @type {Record<string, number>}
+ */
+export const CRIME_MONEY = {
+  Shoplift: 15e3,
+  "Rob Store": 400e3,
+  Mug: 36e3,
+  Larceny: 800e3,
+  "Deal Drugs": 120e3,
+  "Bond Forgery": 4.5e6,
+  "Traffick Arms": 600e3,
+  Homicide: 45e3,
+  "Grand Theft Auto": 1.6e6,
+  Kidnap: 3.6e6,
+  Assassination: 12e6,
+  Heist: 120e6,
+};
+
+/**
+ * Success-chance inputs: the crime's difficulty and how much each skill counts toward it.
+ * Game constants, like the two tables above.
+ * @type {Record<string, {difficulty: number, weights: Record<string, number>}>}
+ */
+export const CRIME_SUCCESS = {
+  Shoplift: { difficulty: 1 / 20, weights: { dexterity: 1, agility: 1 } },
+  "Rob Store": { difficulty: 1 / 5, weights: { hacking: 0.5, dexterity: 2, agility: 1 } },
+  Mug: { difficulty: 1 / 5, weights: { strength: 1.5, defense: 0.5, dexterity: 1.5, agility: 0.5 } },
+  Larceny: { difficulty: 1 / 3, weights: { hacking: 0.5, dexterity: 1, agility: 1 } },
+  "Deal Drugs": { difficulty: 1, weights: { charisma: 3, dexterity: 2, agility: 1 } },
+  "Bond Forgery": { difficulty: 1 / 2, weights: { hacking: 0.05, dexterity: 1.25 } },
+  "Traffick Arms": {
+    difficulty: 2,
+    weights: { charisma: 1, strength: 1, defense: 1, dexterity: 1, agility: 1 },
+  },
+  Homicide: { difficulty: 1, weights: { strength: 2, defense: 2, dexterity: 0.5, agility: 0.5 } },
+  "Grand Theft Auto": {
+    difficulty: 8,
+    weights: { hacking: 1, strength: 1, dexterity: 4, agility: 2, charisma: 2 },
+  },
+  Kidnap: { difficulty: 5, weights: { charisma: 1, strength: 1, dexterity: 1, agility: 1 } },
+  Assassination: { difficulty: 8, weights: { strength: 1, dexterity: 2, agility: 1 } },
+  Heist: {
+    difficulty: 18,
+    weights: { hacking: 1, strength: 1, defense: 1, dexterity: 1, agility: 1, charisma: 1 },
+  },
+};
+
+// Skill level the weighted sum is divided by, and the weight intelligence gets in every crime.
+const MAX_SKILL_LEVEL = 975;
+const INTELLIGENCE_CRIME_WEIGHT = 0.025;
+
+/**
+ * Success chance of a crime for a player or a sleeve, without Formulas.exe.
+ *
+ * A port of the game's own formula. ns.formulas.work.crimeSuccessChance is the exact
+ * answer and callers prefer it when Formulas.exe is owned; this exists because a stat
+ * ladder is not enough for sleeves — a ladder can't tell a crime that lands half the time
+ * from one that lands 1% of the time, and a sleeve parked on the second never commits it.
+ *
+ * @param {{skills: any, mults?: {crime_success?: number}}} person
+ * @param {string} crime
+ * @returns {number} 0..1, 0 for a crime not in CRIME_SUCCESS
+ */
+export function crimeSuccessChance(person, crime) {
+  const spec = CRIME_SUCCESS[crime];
+  if (!spec) return 0;
+
+  const intelligence = person.skills.intelligence ?? 0;
+  let weighted = INTELLIGENCE_CRIME_WEIGHT * intelligence;
+  for (const [skill, weight] of Object.entries(spec.weights)) {
+    weighted += weight * (person.skills[skill] ?? 0);
+  }
+
+  const intelligenceBonus = 1 + Math.pow(intelligence, 0.8) / 600;
+  const chance =
+    (weighted / MAX_SKILL_LEVEL / spec.difficulty) * (person.mults?.crime_success ?? 1) * intelligenceBonus;
+  return Math.min(chance, 1);
+}
+
+/**
  * Crimes we know the duration of — the only ones rankable.
  * Cast to CrimeType (see globals.d.ts) so call sites can pass these straight to the
  * singularity and formulas APIs without re-asserting at each one.
@@ -118,6 +199,39 @@ export function selectNextCrime(ranked, currentCrime, { switchMargin = 0.1 } = {
       : current.name;
 
   return /** @type {CrimeType} */ (pick);
+}
+
+/**
+ * Best crime among those that actually succeed often enough.
+ *
+ * Expected value alone is not enough of a guard. For karma, Homicide out-ranks everything
+ * even at a 1% chance, so pure EV parks a weak sleeve on a crime it essentially never
+ * lands. Only crimes at or above minChance are ranked. When none qualifies — a fresh
+ * sleeve — the likeliest crime runs instead: it pays full exp most often, which is what
+ * lifts the stats that put better crimes over the floor.
+ *
+ * Both branches keep a running crime unless another is better by switchMargin, for the
+ * reason selectNextCrime gives: a switch discards the running crime's progress.
+ *
+ * @param {Array<{name: string, money: number, chance: number}>} candidates
+ * @param {string | null} currentCrime
+ * @param {{goal?: "money" | "karma", minChance?: number, switchMargin?: number}} [opts]
+ * @returns {CrimeType | null}
+ */
+export function pickAchievableCrime(
+  candidates,
+  currentCrime,
+  { goal = "money", minChance = 0.5, switchMargin = 0.1 } = {},
+) {
+  const ranked = rankCrimes(candidates, { goal });
+  const achievable = ranked.filter((c) => c.chance >= minChance);
+  if (achievable.length > 0) return selectNextCrime(achievable, currentCrime, { switchMargin });
+
+  const likeliest = [...ranked].sort((a, b) => b.chance - a.chance || a.timeMs - b.timeMs)[0];
+  if (!likeliest) return null;
+  const current = ranked.find((c) => c.name === currentCrime);
+  const keep = current && likeliest.chance <= current.chance * (1 + switchMargin);
+  return /** @type {CrimeType} */ (keep ? current.name : likeliest.name);
 }
 
 /**
