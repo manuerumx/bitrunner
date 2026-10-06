@@ -240,7 +240,9 @@ These require specific Source Files or BitNode conditions. Each checks for API a
   - `run src/advanced/augmentation-buyer.js install` — Purchases augmentations, keeps leftover money (no NeuroFlux)
   - `run src/advanced/augmentation-buyer.js install nfg` — Purchases augmentations, then dumps leftover money into NeuroFlux Governor levels (for manual installs)
   - `run src/advanced/augmentation-buyer.js install reset` — Purchases (including the NeuroFlux dump) and installs (triggers soft reset)
-- **Strategy**: Buys most expensive augmentations first (price multiplier stacking). NeuroFlux Governor is only bought with `nfg` or `reset`, as a final money dump: each NFG level multiplies every *other* aug's price by 1.9× as well, so dumping early would price the rest of the catalog out of reach.
+  - `--prefer hacking,rep` (works with any of the above) — Buys augs that boost those stats first, in the order listed, then the rest. Categories: `hacking`, `combat`, `charisma`, `rep` (faction + company), `hacknet`, `bladeburner`, `crime`, `work`. Augs with only a special effect (e.g. Neuroreceptor Management Implant) count as unpreferred.
+- **Strategy**: Buys most expensive augmentations first (price multiplier stacking). That is still the default, and with `--prefer` it is the order within each preference tier. Preferring a category can mean fewer augs in total: a cheap preferred aug bought first makes every expensive one after it 1.9× pricier.
+- **RAM**: `--prefer` reads stats through `tools/aug-stats-worker.js`, which runs once and exits. `getAugmentationStats` costs 5 GB × 16/4/1 by SF4 level (81.6 GB worker at SF4.1), so the buyer itself doesn't pay for it. If the worker can't start, the buyer warns and uses the default order. The buyer gains ~1.1 GB for `ns.run` + `ns.isRunning`. NeuroFlux Governor is only bought with `nfg` or `reset`, as a final money dump: each NFG level multiplies every *other* aug's price by 1.9× as well, so dumping early would price the rest of the catalog out of reach.
 
 #### `advanced/gang-manager.js` — Gang Operations
 - **Requires**: Source-File 2 (or BitNode 2), gang must be created first
