@@ -54,3 +54,19 @@ for (const script of ROOTING_SCRIPTS) {
     }
   });
 }
+
+// The analyzer follows `import` statements to find a script's dependencies, but not
+// re-exports. `export { x } from "..."` runs fine in Node and fails in game with "Could not
+// calculate ram usage" for every script importing x through it.
+const RE_EXPORT = /^\s*export\s*(\{[^}]*\}|\*(\s+as\s+\w+)?)\s*from\b/m;
+
+test("no script re-exports from another module", () => {
+  for (const file of walk(SRC)) {
+    const source = readFileSync(file, "utf8");
+    assert.doesNotMatch(
+      source,
+      RE_EXPORT,
+      `${relative(ROOT, file)}: re-exports are invisible to the static RAM calculation`,
+    );
+  }
+});

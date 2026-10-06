@@ -11,8 +11,8 @@ import {
   spareFactions,
   needsKarma,
   canBuySleeveAugs,
-  FACTION_WORK_TYPES,
 } from "/src/lib/sleeves.js";
+import { FACTION_WORK_TYPES, betterFactionWorkTypes } from "/src/lib/faction-work.js";
 
 // ── needsReassignment ───────────────────────────────────────────────────────
 //
@@ -129,6 +129,25 @@ test("needsReassignment accepts any allowed faction work type", () => {
   const current = { type: "FACTION", factionName: "Tetrads", factionWorkType: "field" };
   const desired = { type: "faction", faction: "Tetrads", workTypes: FACTION_WORK_TYPES };
   assert.equal(needsReassignment(current, desired), false);
+});
+
+// Field work trains every stat, security every stat but charisma, hacking only hacking.
+// The managers take the first type a faction accepts, so the order is the preference.
+test("FACTION_WORK_TYPES prefers field, then security, then hacking", () => {
+  assert.deepEqual(FACTION_WORK_TYPES, ["field", "security", "hacking"]);
+});
+
+// needsReassignment accepts any allowed type, so work started before the order changed
+// (or on a faction that offered nothing better at the time) is upgraded separately: only
+// the types ranked above the live one are tried, and the live one is never restarted.
+test("betterFactionWorkTypes lists only the types ranked above the live one", () => {
+  assert.deepEqual(betterFactionWorkTypes("hacking"), ["field", "security"]);
+  assert.deepEqual(betterFactionWorkTypes("security"), ["field"]);
+  assert.deepEqual(betterFactionWorkTypes("field"), []);
+});
+
+test("betterFactionWorkTypes offers every type when the live one is unknown", () => {
+  assert.deepEqual(betterFactionWorkTypes(undefined), FACTION_WORK_TYPES);
 });
 
 // ── chooseSleeveTask ────────────────────────────────────────────────────────

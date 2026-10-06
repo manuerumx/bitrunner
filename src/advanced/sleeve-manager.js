@@ -14,6 +14,9 @@ import {
   planSleeveSpending,
   spareFactions,
 } from "/src/lib/sleeves.js";
+// Imported directly, not re-exported through sleeves.js: the game's RAM calculator
+// doesn't follow `export ... from` and fails with "Could not calculate ram usage".
+import { betterFactionWorkTypes } from "/src/lib/faction-work.js";
 import { log, formatMoney } from "/src/lib/utils.js";
 
 function hasSleeveAPI(ns) {
@@ -236,7 +239,17 @@ export async function main(ns) {
       // Re-issuing an assignment restarts the task, discarding progress: crimes and
       // faction work accumulate cycles toward a payout, so a 30 s reassignment loop can
       // hold a sleeve permanently at zero. Only act when the live task differs.
-      if (!needsReassignment(live, task)) continue;
+      if (!needsReassignment(live, task)) {
+        // Already on the right faction, possibly on a worse work type (hacking when field
+        // is offered). Only better types are tried, so the live work is never restarted.
+        if (task.type === "faction" && live?.type === "FACTION") {
+          const better = betterFactionWorkTypes(live.factionWorkType);
+          if (better.length > 0 && startFactionWork(ns, i, task.faction, better)) {
+            log(ns, `Sleeve ${i}: ${task.faction} switched from ${live.factionWorkType} work`);
+          }
+        }
+        continue;
+      }
 
       // Don't leave the sleeve idle until the next cycle picks other work.
       const rejectWork = (name) => {

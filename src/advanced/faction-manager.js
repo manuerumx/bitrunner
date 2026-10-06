@@ -3,6 +3,7 @@ import { scanNetwork } from "/src/lib/scanner.js";
 import { PORTS } from "/src/lib/constants.js";
 import { writePortData } from "/src/lib/port-registry.js";
 import { companiesToUnlock } from "/src/lib/companies.js";
+import { FACTION_WORK_TYPES, betterFactionWorkTypes } from "/src/lib/faction-work.js";
 
 // Yielded to while it runs — see the takeover guard in the work loop below.
 const CRIME_WORKER = "/src/tools/crime-worker.js";
@@ -110,15 +111,16 @@ function holdCompanyJobs(ns) {
   }
 }
 
-// Start working for a faction, taking the first work type it offers.
+// Start working for a faction, taking the first of workTypes it offers (best first, see
+// FACTION_WORK_TYPES).
 //
 // workForFaction does NOT throw when it can't start: it returns false — for a work type
 // the faction doesn't offer, and for every type when the faction is the player's gang
 // (a gang faction's reputation comes from the gang, never from working for it). The old
 // try/catch chain therefore never reached field or security work, and logged "Working
 // for" a faction it had failed to start.
-function startFactionWork(ns, faction) {
-  for (const workType of ["hacking", "field", "security"]) {
+function startFactionWork(ns, faction, workTypes = FACTION_WORK_TYPES) {
+  for (const workType of workTypes) {
     try {
       if (ns.singularity.workForFaction(faction, workType, false)) return true;
     } catch {}
@@ -190,6 +192,11 @@ export async function main(ns) {
     for (const faction of pendingFactions) {
       const alreadyOnIt = currentWork && currentWork.type === "FACTION" && currentWork.factionName === faction;
       if (alreadyOnIt) {
+        // Move up to a better work type if the faction offers one, e.g. hacking → field.
+        const better = betterFactionWorkTypes(currentWork.factionWorkType);
+        if (better.length > 0 && startFactionWork(ns, faction, better)) {
+          log(ns, `${faction}: switched from ${currentWork.factionWorkType} work to a better type`);
+        }
         bestFaction = faction;
         break;
       }
