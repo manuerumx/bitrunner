@@ -9,12 +9,7 @@ import {
   pickAchievableCrime,
 } from "/src/lib/crime.js";
 
-/**
- * Faction work a sleeve may do, best first. Not every faction offers hacking work, so the
- * manager tries these in order and keeps whichever the game accepts.
- * @type {FactionWorkType[]}
- */
-export const FACTION_WORK_TYPES = ["hacking", "field", "security"];
+import { FACTION_WORK_TYPES } from "/src/lib/faction-work.js";
 
 // ns.sleeve.getTask() reports the live task in the game's own vocabulary; sleeve-manager
 // picks tasks in its own. This maps our task descriptor onto the fields getTask returns,
@@ -25,7 +20,8 @@ const TASK_MATCHERS = {
   crime: (live, want) => live.type === "CRIME" && live.crimeType === want.crime,
   gym: (live, want) => live.type === "CLASS" && live.classType === want.stat,
   // Any allowed work type matches: demanding the first one would re-issue a sleeve that
-  // landed on field work because the faction has no hacking, wiping its progress each cycle.
+  // landed on security work because the faction has no field work, every cycle.
+  // betterFactionWorkTypes handles moving up to a better type.
   faction: (live, want) =>
     live.type === "FACTION" &&
     live.factionName === want.faction &&
