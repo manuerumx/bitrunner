@@ -1,4 +1,12 @@
+import { AUG_CATEGORIES, AUG_STATS_FILE, augCategories, orderByPreference, parsePreference } from "/src/lib/augmentations.js";
 import { log, tlog, formatMoney } from "/src/lib/utils.js";
+
+//   --prefer hacking,rep   buy augs boosting these categories first (best first), most
+//                          expensive first within each; the rest follow. Categories: hacking,
+//                          combat, charisma, rep, hacknet, bladeburner, crime, work.
+//                          Runs aug-stats-worker.js once for the stats.
+
+const STATS_WORKER = "/src/tools/aug-stats-worker.js";
 
 function hasSingularity(ns) {
   try {
@@ -66,6 +74,26 @@ function buyNeuroFlux(ns) {
   return bought;
 }
 
+/**
+ * Stats of the named augmentations, via the one-shot worker so this script doesn't carry
+ * getAugmentationStats' RAM. Null if the worker could not start.
+ *
+ * @param {NS} ns
+ * @param {string[]} names
+ * @returns {Promise<Record<string, Record<string, number>> | null>}
+ */
+async function fetchAugStats(ns, names) {
+  const pid = ns.run(STATS_WORKER, 1, ...names);
+  if (pid === 0) return null;
+  while (ns.isRunning(pid)) await ns.sleep(200);
+  try {
+    const stats = JSON.parse(ns.read(AUG_STATS_FILE));
+    return stats && typeof stats === "object" ? stats : null;
+  } catch {
+    return null;
+  }
+}
+
 /** @param {NS} ns */
 export async function main(ns) {
   ns.disableLog("ALL");
@@ -75,40 +103,60 @@ export async function main(ns) {
     return;
   }
 
-  const installNow = ns.args[0] === "install";
-  const resetNow = ns.args[1] === "reset";
+  const flags = ns.flags([["prefer", ""]]);
+  const installNow = flags._[0] === "install";
+  const resetNow = flags._[1] === "reset";
   // NFG levels are a money dump: each level bought multiplies every OTHER aug's
   // price by 1.9x too, so buying them early makes the rest of the catalog
   // unreachable. Only dump into NFG when the leftover cash is about to be wiped
   // by a reset, or when explicitly asked to via 'nfg' (manual-install workflow).
-  const dumpIntoNfg = resetNow || ns.args[1] === "nfg";
+  const dumpIntoNfg = resetNow || flags._[1] === "nfg";
 
-  const augs = getAllAvailableAugs(ns);
+  const { prefer, unknown } = parsePreference(String(flags.prefer));
+  if (unknown.length > 0) {
+    ns.tprint(`ERROR: unknown --prefer categor${unknown.length === 1 ? "y" : "ies"} ${unknown.join(", ")}. Use: ${AUG_CATEGORIES.join(", ")}`);
+    return;
+  }
+
+  let augs = getAllAvailableAugs(ns);
+  /** @type {Record<string, Record<string, number>>} */
+  let stats = {};
+  if (prefer.length > 0) {
+    const fetched = await fetchAugStats(ns, augs.map((a) => a.name));
+    if (fetched) {
+      stats = fetched;
+      augs = orderByPreference(augs, stats, prefer);
+    } else {
+      tlog(ns, `WARN: could not start ${STATS_WORKER} (not enough free RAM?) — using the default order.`);
+    }
+  }
   let totalCost = 0;
   let affordable = [];
 
   tlog(ns, `\n=== Augmentation Buyer ===`);
   tlog(ns, `Available augmentations: ${augs.length}`);
   tlog(ns, `Player money: ${formatMoney(ns.getPlayer().money)}`);
+  if (prefer.length > 0 && Object.keys(stats).length > 0) tlog(ns, `Preferring: ${prefer.join(" > ")}`);
   tlog(ns, "");
 
   // Each purchase multiplies the price of all REMAINING augs by 1.9x. Augs are
-  // sorted most-expensive-first (correct order to maximize count), so we compound
-  // the multiplier as we go — otherwise the estimate is wildly over-optimistic and
-  // the later (cheaper) augs fail to purchase at runtime.
+  // sorted most-expensive-first (correct order to maximize count) unless --prefer
+  // reordered them, so we compound the multiplier as we go — otherwise the estimate
+  // is wildly over-optimistic and the later (cheaper) augs fail to purchase at runtime.
   const AUG_PRICE_MULT = 1.9;
   let simulatedMoney = ns.getPlayer().money;
   let priceMult = 1;
   for (const aug of augs) {
     const realPrice = aug.price * priceMult;
+    const boosts = aug.name in stats ? ` (${[...augCategories(stats[aug.name])].join(", ") || "special"})` : "";
     if (realPrice <= simulatedMoney) {
       affordable.push(aug);
-      tlog(ns, `  [CAN BUY] ${aug.name} from ${aug.faction} - ${formatMoney(realPrice)}`);
+      tlog(ns, `  [CAN BUY] ${aug.name}${boosts} from ${aug.faction} - ${formatMoney(realPrice)}`);
       simulatedMoney -= realPrice;
       totalCost += realPrice;
       priceMult *= AUG_PRICE_MULT;
     } else {
-      tlog(ns, `  [NEED $]  ${aug.name} from ${aug.faction} - ${formatMoney(realPrice)}`);
+      tlog(ns, `  [NEED $]  ${aug.name}${boosts} from ${aug.faction} - ${formatMoney(realPrice)}`);
     }
   }
 
@@ -153,5 +201,6 @@ export async function main(ns) {
     tlog(ns, "\nDry run. Use 'run src/advanced/augmentation-buyer.js install' to purchase (keeps leftover money).");
     tlog(ns, "Use 'run src/advanced/augmentation-buyer.js install nfg' to also dump leftovers into NeuroFlux Governor.");
     tlog(ns, "Use 'run src/advanced/augmentation-buyer.js install reset' to purchase, dump into NFG, and reset.");
+    tlog(ns, `Add '--prefer hacking,rep' to buy augs boosting those first (${AUG_CATEGORIES.join(", ")}).`);
   }
 }

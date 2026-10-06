@@ -1,6 +1,19 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { main } from "/src/advanced/augmentation-buyer.js";
+import { AUG_STATS_FILE } from "/src/lib/augmentations.js";
+
+// Just enough of ns.flags for the buyer: "--name value" pairs, the rest positional in `_`.
+function parseFlags(schema, args) {
+  const out = Object.fromEntries(schema);
+  out._ = [];
+  for (let i = 0; i < args.length; i++) {
+    const arg = String(args[i]);
+    if (arg.startsWith("--")) out[arg.slice(2)] = args[++i];
+    else out._.push(args[i]);
+  }
+  return out;
+}
 
 // Minimal Bitburner mock: every queued purchase (including each NeuroFlux
 // Governor level) multiplies all augmentation prices by 1.9x, matching the
@@ -10,12 +23,24 @@ function makeMockNs({ money, factionRep, augCatalog, args }) {
   const purchases = [];
   const state = { money, installed: false };
   const owned = [];
+  const runs = [];
+  const files = {};
   let queued = 0;
 
   const currentPrice = (aug) => augCatalog[aug].price * Math.pow(1.9, queued);
 
   const ns = {
     args,
+    flags: (schema) => parseFlags(schema, args),
+    // Stands in for aug-stats-worker.js: writes the catalog's stats and exits at once.
+    run(script, _threads, ...names) {
+      runs.push(script);
+      files[AUG_STATS_FILE] = JSON.stringify(Object.fromEntries(names.map((n) => [n, augCatalog[n].stats ?? {}])));
+      return 1;
+    },
+    isRunning: () => false,
+    sleep: async () => {},
+    read: (file) => files[file] ?? "",
     disableLog() {},
     print() {},
     tprint() {},
@@ -56,7 +81,7 @@ function makeMockNs({ money, factionRep, augCatalog, args }) {
     },
   };
 
-  return { ns, purchases, state };
+  return { ns, purchases, state, runs };
 }
 
 const CATALOG = {
@@ -132,4 +157,81 @@ test("install reset still dumps into NFG and installs when no regular aug is aff
 
   assert.ok(purchases.filter((a) => a === "NeuroFlux Governor").length > 0);
   assert.equal(state.installed, true);
+});
+
+// Price is 1.9x per purchase, so the order decides what $30m buys: most-expensive-first gets
+// Neurotrainer ($20m) and then can't afford Augmented Targeting ($8m x 1.9).
+const PREF_CATALOG = {
+  Neurotrainer: { price: 20e6, repReq: 0, factions: ["CyberSec"], stats: { charisma_exp: 1.1 } },
+  "Augmented Targeting": { price: 8e6, repReq: 0, factions: ["CyberSec"], stats: { dexterity: 1.1 } },
+  "NeuroFlux Governor": { price: 750e3, repReq: 0, factions: ["CyberSec"] },
+};
+
+test("default order is most-expensive-first and never runs the stats worker", async () => {
+  const { ns, purchases, runs } = makeMockNs({
+    money: 30e6,
+    factionRep: REP,
+    augCatalog: PREF_CATALOG,
+    args: ["install"],
+  });
+
+  await main(ns);
+
+  assert.deepEqual(purchases, ["Neurotrainer"]);
+  assert.deepEqual(runs, []);
+});
+
+test("--prefer buys augs boosting the preferred category first", async () => {
+  const { ns, purchases, runs } = makeMockNs({
+    money: 30e6,
+    factionRep: REP,
+    augCatalog: PREF_CATALOG,
+    args: ["install", "--prefer", "combat"],
+  });
+
+  await main(ns);
+
+  assert.equal(purchases[0], "Augmented Targeting");
+  assert.equal(runs.length, 1, "stats come from the one-shot worker");
+});
+
+test("--prefer still honours positional install/reset after the flag", async () => {
+  const { ns, purchases, state } = makeMockNs({
+    money: 30e6,
+    factionRep: REP,
+    augCatalog: PREF_CATALOG,
+    args: ["--prefer", "combat", "install", "reset"],
+  });
+
+  await main(ns);
+
+  assert.equal(purchases[0], "Augmented Targeting");
+  assert.equal(state.installed, true);
+});
+
+test("--prefer with an unknown category buys nothing", async () => {
+  const { ns, purchases } = makeMockNs({
+    money: 30e6,
+    factionRep: REP,
+    augCatalog: PREF_CATALOG,
+    args: ["install", "--prefer", "hax"],
+  });
+
+  await main(ns);
+
+  assert.deepEqual(purchases, []);
+});
+
+test("--prefer falls back to the default order when the worker cannot start", async () => {
+  const { ns, purchases } = makeMockNs({
+    money: 30e6,
+    factionRep: REP,
+    augCatalog: PREF_CATALOG,
+    args: ["install", "--prefer", "combat"],
+  });
+  ns.run = () => 0;
+
+  await main(ns);
+
+  assert.deepEqual(purchases, ["Neurotrainer"]);
 });
