@@ -1,9 +1,8 @@
 // Corporation decision logic, kept pure so it is testable without the (expensive) corp API.
 //
-// See docs/API-COVERAGE-AUDIT.md §5.5. Every ns.corporation.* function is documented at
-// 20 GB (NetscriptDefinitions.d.ts), so anything that touches this namespace has to be
-// budgeted deliberately — run tools/ram-report.js to see what the game actually charges
-// before adding calls to a persistent manager.
+// Corporation calls cost 10-20 GB each. test/corp-ram.test.js pins every corp script's RAM and
+// rejects names that aren't corporation functions; run tools/ram-report.js api to see what
+// the game actually charges.
 
 // Materials that multiply a division's production while they are HELD in the warehouse.
 // They are inputs to the production multiplier, never output to be sold: liquidating them
