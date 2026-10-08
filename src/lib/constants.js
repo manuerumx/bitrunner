@@ -43,6 +43,7 @@ export const MANAGERS = [
   { id: "sleeve", script: "/src/advanced/sleeve-manager.js", name: "Sleeve Manager", priority: 9, phase: 6 },
   { id: "bladeburner", script: "/src/advanced/bladeburner-manager.js", name: "Bladeburner", priority: 10, phase: 6 },
   { id: "corp-setup", script: "/src/tools/corp-setup.js", name: "Corp Setup", priority: 11, phase: 6, oneShot: true },
+  { id: "corp-warehouse", script: "/src/tools/corp-warehouse.js", name: "Corp Warehouses", priority: 11.1, phase: 6, oneShot: true },
   { id: "corp-office", script: "/src/tools/corp-office.js", name: "Corp Offices", priority: 11.2, phase: 6, oneShot: true },
   { id: "corp-boost", script: "/src/tools/corp-boost.js", name: "Corp Boost", priority: 11.5, phase: 6, oneShot: true },
 ];
@@ -154,6 +155,8 @@ export const DEFAULTS = {
   // Tea / a party once average energy / morale falls below this fraction of its max.
   corpWellbeingFloor: 0.95,
   corpPartyCostPerEmployee: 500e3,
+  // A warehouse grows one level once it is this full.
+  corpWarehouseUpgradeAt: 0.8,
   // Boost materials multiply a division's production while held. Targets are per city and
   // deliberately modest — an overfilled warehouse stalls production outright.
   //

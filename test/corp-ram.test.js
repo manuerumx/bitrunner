@@ -37,6 +37,7 @@ const BASE_RAM = 1.6;
 // 0 GB. Keep `ns.corporation.<fn>` out of comments: this count can't tell them from code.
 const CORP_SCRIPTS = {
   "src/tools/corp-setup.js": 131.6,
+  "src/tools/corp-warehouse.js": 121.6,
   "src/tools/corp-office.js": 151.6,
   "src/tools/corp-boost.js": 81.6,
 };
