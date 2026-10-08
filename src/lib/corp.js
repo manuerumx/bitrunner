@@ -223,3 +223,43 @@ export function planBoostPurchases({ targets, stored, sizes, prices, freeSpace, 
     .map((want) => ({ name: want.name, amount: Math.floor(want.amount * scale) }))
     .filter((buy) => buy.amount > 0);
 }
+
+// ── Upgrades and research ───────────────────────────────────────────────────
+
+/**
+ * Corp-wide upgrades to level now: one level each, cheapest first, while `budget` lasts.
+ *
+ * @param {Record<string, number>} costs next-level cost per upgrade
+ * @param {number} budget
+ * @returns {string[]}
+ */
+export function planUpgrades(costs, budget) {
+  const plan = [];
+  let left = budget;
+  for (const [name, cost] of Object.entries(costs).sort((a, b) => a[1] - b[1])) {
+    if (cost > left) break;
+    plan.push(name);
+    left -= cost;
+  }
+  return plan;
+}
+
+/**
+ * The next research to buy: the first in `priority` not yet owned, if it costs at most
+ * `spend` of the division's research points. Strict order, so points build up for the
+ * important ones, and prerequisites are bought first if `priority` lists them first.
+ *
+ * @param {string[]} priority
+ * @param {string[]} owned
+ * @param {(name: string) => number} costOf
+ * @param {number} points
+ * @param {number} spend fraction of points one research may take
+ * @returns {{name: string, cost: number} | null}
+ */
+export function nextResearch(priority, owned, costOf, points, spend) {
+  const name = priority.find((n) => !owned.includes(n));
+  if (name === undefined) return null;
+  const cost = costOf(name);
+  return cost <= points * spend ? { name, cost } : null;
+}
+

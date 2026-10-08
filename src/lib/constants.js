@@ -46,6 +46,7 @@ export const MANAGERS = [
   { id: "corp-warehouse", script: "/src/tools/corp-warehouse.js", name: "Corp Warehouses", priority: 11.1, phase: 6, oneShot: true },
   { id: "corp-office", script: "/src/tools/corp-office.js", name: "Corp Offices", priority: 11.2, phase: 6, oneShot: true },
   { id: "corp-boost", script: "/src/tools/corp-boost.js", name: "Corp Boost", priority: 11.3, phase: 6, oneShot: true },
+  { id: "corp-research", script: "/src/tools/corp-research.js", name: "Corp Research", priority: 11.4, phase: 6, oneShot: true },
 ];
 
 export const WORKER_SCRIPTS = ["/src/hack.js", "/src/grow.js", "/src/weaken.js", "/src/share.js", "/src/xp.js"];
@@ -159,6 +160,20 @@ export const DEFAULTS = {
   corpWarehouseUpgradeAt: 0.8,
   // Fraction of each warehouse corp-boost.js leaves free of boost materials, for inputs and output.
   corpWarehouseHeadroom: 0.4,
+  // Corp-wide upgrades corp-research.js levels, cheapest first, within corpUpgradeSpend of the
+  // money above the reserve per run.
+  corpUpgrades: [
+    "Smart Storage", "Smart Factories", "FocusWires", "Neural Accelerators", "Speech Processor Implants",
+    "Nuoptimal Nootropic Injector Implants", "ABC SalesBots", "Wilson Analytics", "Project Insight",
+  ],
+  corpUpgradeSpend: 0.05,
+  // Research per division, bought strictly in this order; prerequisites come first. One
+  // research may take at most corpResearchSpend of the division's points.
+  corpResearch: [
+    "Hi-Tech R&D Laboratory", "Market-TA.I", "Market-TA.II", "AutoBrew", "AutoPartyManager",
+    "Overclock", "Sti.mu", "Automatic Drug Administration", "Go-Juice", "CPH4 Injections",
+  ],
+  corpResearchSpend: 0.5,
   batchSpacingMs: 200,
   // HWGW pipeline depth per target per cycle. The old flat cap of 100 batches was wrong for both
   // ends: it under-filled slow high-tier targets (whose long weakenTime needs >100 batches just to

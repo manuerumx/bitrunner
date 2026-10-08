@@ -33,6 +33,8 @@ declare global {
   type CorpIndustryName = Parameters<NS["corporation"]["expandIndustry"]>[0];
   type CorpUnlockName = Parameters<NS["corporation"]["purchaseUnlock"]>[0];
   type CorpJob = Parameters<NS["corporation"]["setJobAssignment"]>[2];
+  type CorpUpgradeName = Parameters<NS["corporation"]["levelUpgrade"]>[0];
+  type CorpResearchName = Parameters<NS["corporation"]["research"]>[1];
 
   // Port IPC payloads — the JSON shapes passed through the netscript ports listed in
   // constants.js PORTS. Writers and readers both annotate against these so the contract

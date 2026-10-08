@@ -3,11 +3,13 @@ import assert from "node:assert/strict";
 import {
   BOOST_SIZES,
   boostFactors,
+  nextResearch,
   optimalBoostAmounts,
   orderJobAssignments,
   planBoostPurchases,
   planJobs,
   planSetup,
+  planUpgrades,
   wellbeingActions,
 } from "/src/lib/corp.js";
 
@@ -213,3 +215,36 @@ test("planBoostPurchases buys nothing in a full warehouse or with no money", () 
   assert.deepEqual(boost({ freeSpace: -5 }), []);
   assert.deepEqual(boost({ budget: -1e9 }), []);
 });
+
+// ── planUpgrades / nextResearch ─────────────────────────────────────────────
+
+test("planUpgrades levels the cheapest upgrades the budget covers", () => {
+  const costs = { "Smart Factories": 2e9, "Smart Storage": 1e9, FocusWires: 5e9 };
+  assert.deepEqual(planUpgrades(costs, 4e9), ["Smart Storage", "Smart Factories"]);
+});
+
+test("planUpgrades buys nothing on an empty or negative budget", () => {
+  assert.deepEqual(planUpgrades({ "Smart Storage": 1e9 }, 0), []);
+  assert.deepEqual(planUpgrades({ "Smart Storage": 1e9 }, -5e9), []);
+});
+
+const RESEARCH = ["Hi-Tech R&D Laboratory", "Market-TA.I", "Market-TA.II"];
+const RESEARCH_COST = { "Hi-Tech R&D Laboratory": 5000, "Market-TA.I": 20000, "Market-TA.II": 50000 };
+const costOf = (name) => RESEARCH_COST[name];
+
+test("nextResearch picks the first unowned research it can afford", () => {
+  assert.deepEqual(nextResearch(RESEARCH, [], costOf, 10000, 0.5), { name: "Hi-Tech R&D Laboratory", cost: 5000 });
+  assert.deepEqual(nextResearch(RESEARCH, ["Hi-Tech R&D Laboratory"], costOf, 40000, 0.5), {
+    name: "Market-TA.I",
+    cost: 20000,
+  });
+});
+
+test("nextResearch waits for points rather than skipping ahead", () => {
+  assert.equal(nextResearch(RESEARCH, ["Hi-Tech R&D Laboratory"], costOf, 39999, 0.5), null);
+});
+
+test("nextResearch has nothing left once everything is owned", () => {
+  assert.equal(nextResearch(RESEARCH, RESEARCH, costOf, 1e9, 1), null);
+});
+
