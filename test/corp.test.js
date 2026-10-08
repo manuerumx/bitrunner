@@ -1,84 +1,307 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BOOST_MATERIALS, planBoostPurchases, selectMaterialsToSell } from "/src/lib/corp.js";
+import {
+  BOOST_SIZES,
+  boostFactors,
+  nextResearch,
+  optimalBoostAmounts,
+  orderJobAssignments,
+  planBoostPurchases,
+  planJobs,
+  planSetup,
+  planUpgrades,
+  shouldAcceptOffer,
+  trackOffer,
+  wellbeingActions,
+} from "/src/lib/corp.js";
 
-// Material shape as returned by ns.corporation.getMaterial() — only the fields read here.
-function mat(name, over = {}) {
-  return { name, stored: 100, productionAmount: 10, ...over };
+// ── planSetup ───────────────────────────────────────────────────────────────
+
+const ALL_CITIES = ["Aevum", "Chongqing", "Sector-12", "New Tokyo", "Ishima", "Volhaven"];
+const UNLOCK_COSTS = { "Smart Supply": 25e9, "Warehouse API": 50e9, "Office API": 50e9 };
+
+function setup(over = {}) {
+  return planSetup({
+    unlocks: [],
+    cities: ["Sector-12"],
+    allCities: ALL_CITIES,
+    unlockCosts: UNLOCK_COSTS,
+    cityCost: 4e9,
+    funds: 1e12,
+    reserve: 1e9,
+    ...over,
+  });
 }
 
-// ── selectMaterialsToSell ───────────────────────────────────────────────────
+const names = (plan) => plan.buy.map((step) => step.name);
 
-// Hardware / Robots / AI Cores / Real Estate multiply a division's production while
-// they are HELD. Selling them liquidates the multiplier. corp-manager.js sold all four
-// on the same "stored > 0 && producing" rule it used for actual output goods.
-test("selectMaterialsToSell never sells boost materials", () => {
-  const materials = BOOST_MATERIALS.map((name) => mat(name));
-  assert.deepEqual(selectMaterialsToSell(materials), []);
+test("planSetup buys Smart Supply, then the missing cities, then the API unlocks", () => {
+  const plan = setup();
+  assert.deepEqual(names(plan), [
+    "Smart Supply", "Aevum", "Chongqing", "New Tokyo", "Ishima", "Volhaven", "Warehouse API", "Office API",
+  ]);
+  assert.equal(plan.waiting, null);
 });
 
-test("selectMaterialsToSell sells produced output materials", () => {
-  const materials = [mat("Food"), mat("Plants")];
-  assert.deepEqual(selectMaterialsToSell(materials), ["Food", "Plants"]);
+// A cheap later step must not spend money an earlier, more important one is waiting for.
+test("planSetup stops at the first step it can't afford", () => {
+  const plan = setup({ funds: 1e9 + 25e9 + 8e9 + 1 });
+  assert.deepEqual(names(plan), ["Smart Supply", "Aevum", "Chongqing"]);
+  assert.deepEqual(plan.waiting, { kind: "city", name: "New Tokyo", cost: 4e9 });
 });
 
-test("selectMaterialsToSell holds boost materials while selling output alongside them", () => {
-  const materials = [mat("Food"), mat("Hardware"), mat("Plants"), mat("Real Estate")];
-  assert.deepEqual(selectMaterialsToSell(materials), ["Food", "Plants"]);
+test("planSetup never spends the reserve", () => {
+  const plan = setup({ funds: 25e9 + 1e9 - 1 });
+  assert.deepEqual(plan.buy, []);
+  assert.equal(plan.waiting?.name, "Smart Supply");
 });
 
-// A material the division does not produce is bought stock, not output — selling it
-// would dump inventory the division just paid for.
-test("selectMaterialsToSell ignores materials the division does not produce", () => {
-  assert.deepEqual(selectMaterialsToSell([mat("Food", { productionAmount: 0 })]), []);
+test("planSetup has nothing to do once everything is owned", () => {
+  const plan = setup({ unlocks: ["Smart Supply", "Warehouse API", "Office API"], cities: ALL_CITIES });
+  assert.deepEqual(plan, { buy: [], waiting: null });
 });
 
-test("selectMaterialsToSell ignores materials with nothing in stock", () => {
-  assert.deepEqual(selectMaterialsToSell([mat("Food", { stored: 0 })]), []);
+
+// ── planJobs / orderJobAssignments / wellbeingActions ───────────────────────
+
+const WEIGHTS = { Operations: 2, Engineer: 2, Business: 1, Management: 2, "Research & Development": 2 };
+
+test("planJobs gives one of each job first, in key order", () => {
+  assert.deepEqual(planJobs(3, WEIGHTS), {
+    Operations: 1, Engineer: 1, Business: 1, Management: 0, "Research & Development": 0,
+  });
+});
+
+test("planJobs splits a larger office by weight", () => {
+  assert.deepEqual(planJobs(9, WEIGHTS), {
+    Operations: 2, Engineer: 2, Business: 1, Management: 2, "Research & Development": 2,
+  });
+});
+
+test("planJobs leaves an empty office empty", () => {
+  assert.deepEqual(planJobs(0, WEIGHTS), {
+    Operations: 0, Engineer: 0, Business: 0, Management: 0, "Research & Development": 0,
+  });
+});
+
+test("planJobs never staffs a job with weight 0", () => {
+  assert.deepEqual(planJobs(2, { Operations: 1, Engineer: 0 }), { Operations: 2 });
+});
+
+test("orderJobAssignments fills jobs from Unassigned", () => {
+  const current = { Operations: 0, Engineer: 0, Business: 0, Unassigned: 3 };
+  const target = { Operations: 1, Engineer: 1, Business: 1 };
+  assert.deepEqual(orderJobAssignments(current, target), [
+    { job: "Operations", count: 1 },
+    { job: "Engineer", count: 1 },
+    { job: "Business", count: 1 },
+  ]);
+});
+
+// Raising a job draws from Unassigned, so the cuts have to run first.
+test("orderJobAssignments makes every cut before any raise", () => {
+  const current = { Operations: 0, Engineer: 3, Unassigned: 0 };
+  const target = { Operations: 2, Engineer: 1 };
+  assert.deepEqual(orderJobAssignments(current, target), [
+    { job: "Engineer", count: 1 },
+    { job: "Operations", count: 2 },
+  ]);
+});
+
+test("orderJobAssignments cuts jobs the plan doesn't use, such as Intern", () => {
+  const current = { Operations: 0, Intern: 2, Unassigned: 0 };
+  assert.deepEqual(orderJobAssignments(current, { Operations: 2 }), [
+    { job: "Intern", count: 0 },
+    { job: "Operations", count: 2 },
+  ]);
+});
+
+test("orderJobAssignments has nothing to do when the office matches", () => {
+  assert.deepEqual(orderJobAssignments({ Operations: 2, Unassigned: 0 }, { Operations: 2 }), []);
+});
+
+test("wellbeingActions asks for tea and a party below the floor", () => {
+  const office = { avgEnergy: 90, maxEnergy: 100, avgMorale: 99, maxMorale: 100 };
+  assert.deepEqual(wellbeingActions(office, 0.95), { tea: true, party: false });
+});
+
+// ── boostFactors / optimalBoostAmounts ──────────────────────────────────────
+
+const AGRI_FACTORS = { Hardware: 0.2, Robots: 0.3, "AI Cores": 0.3, "Real Estate": 0.72 };
+
+test("boostFactors maps an industry's factors to material names, 0 when missing", () => {
+  assert.deepEqual(boostFactors({ hardwareFactor: 0.2, realEstateFactor: 0.72 }), {
+    Hardware: 0.2, Robots: 0, "AI Cores": 0, "Real Estate": 0.72,
+  });
+});
+
+test("optimalBoostAmounts buys nothing without space", () => {
+  assert.deepEqual(optimalBoostAmounts(AGRI_FACTORS, BOOST_SIZES, 0), {
+    Hardware: 0, Robots: 0, "AI Cores": 0, "Real Estate": 0,
+  });
+});
+
+// In a small warehouse only the material with the best factor per unit of space is worth it.
+test("optimalBoostAmounts spends a small space on Real Estate alone for Agriculture", () => {
+  assert.deepEqual(optimalBoostAmounts(AGRI_FACTORS, BOOST_SIZES, 100), {
+    Hardware: 0, Robots: 0, "AI Cores": 0, "Real Estate": 20000,
+  });
+});
+
+test("optimalBoostAmounts never buys a material the industry doesn't use", () => {
+  assert.deepEqual(optimalBoostAmounts({ Hardware: 0.5 }, BOOST_SIZES, 6), {
+    Hardware: 100, Robots: 0, "AI Cores": 0, "Real Estate": 0,
+  });
+});
+
+// At the optimum every material bought adds the same production per unit of space:
+// d/dx [c·ln(1 + 0.002x)] / s = 0.002c / ((1 + 0.002x)·s).
+test("optimalBoostAmounts fills the space with equal marginal value per unit of space", () => {
+  const space = 10000;
+  const amounts = optimalBoostAmounts(AGRI_FACTORS, BOOST_SIZES, space);
+  const used = Object.entries(amounts).reduce((t, [name, x]) => t + x * BOOST_SIZES[name], 0);
+  assert.ok(used <= space && used > space - 1, `used ${used} of ${space}`);
+
+  const marginal = Object.keys(amounts).map(
+    (name) => (0.002 * AGRI_FACTORS[name]) / ((1 + 0.002 * amounts[name]) * BOOST_SIZES[name]),
+  );
+  for (const m of marginal) assert.ok(Math.abs(m / marginal[0] - 1) < 0.01, `marginals ${marginal}`);
 });
 
 // ── planBoostPurchases ──────────────────────────────────────────────────────
 
-// Boost materials are bought toward a per-industry target and then held. The warehouse
-// is the hard constraint: overfilling it stalls production entirely.
-test("planBoostPurchases buys the shortfall against the target", () => {
-  const plan = planBoostPurchases({
+const SIZES = { Hardware: 0.25, Robots: 0.5 };
+const PRICES = { Hardware: 1000, Robots: 1000 };
+
+function boost(over = {}) {
+  return planBoostPurchases({
     targets: { Hardware: 500 },
-    stored: { Hardware: 200 },
-    freeSpace: 1000,
+    stored: {},
+    sizes: SIZES,
+    prices: PRICES,
+    freeSpace: 1e6,
+    budget: 1e12,
+    ...over,
   });
-  assert.deepEqual(plan, [{ name: "Hardware", amount: 300 }]);
+}
+
+test("planBoostPurchases buys the shortfall against the target", () => {
+  assert.deepEqual(boost({ stored: { Hardware: 200 } }), [{ name: "Hardware", amount: 300 }]);
 });
 
 test("planBoostPurchases buys nothing once the target is met", () => {
-  const plan = planBoostPurchases({
-    targets: { Hardware: 500 },
-    stored: { Hardware: 500 },
-    freeSpace: 1000,
-  });
-  assert.deepEqual(plan, []);
+  assert.deepEqual(boost({ stored: { Hardware: 500 } }), []);
 });
 
 test("planBoostPurchases treats a missing stock entry as zero", () => {
-  const plan = planBoostPurchases({ targets: { Robots: 50 }, stored: {}, freeSpace: 1000 });
-  assert.deepEqual(plan, [{ name: "Robots", amount: 50 }]);
+  assert.deepEqual(boost({ targets: { Robots: 50 } }), [{ name: "Robots", amount: 50 }]);
 });
 
-// Warehouse space is shared across every boost material, so the budget has to be
-// consumed as the plan is built, not checked per-material against the full total.
-test("planBoostPurchases caps total purchases at the free warehouse space", () => {
-  const plan = planBoostPurchases({
-    targets: { Hardware: 500, Robots: 500 },
-    stored: {},
-    freeSpace: 700,
-  });
-  assert.deepEqual(plan, [
-    { name: "Hardware", amount: 500 },
+// Shortfall space is 400·0.25 + 400·0.5 = 300; half of it is free, so both halve.
+test("planBoostPurchases scales every purchase down together when space is short", () => {
+  assert.deepEqual(boost({ targets: { Hardware: 400, Robots: 400 }, freeSpace: 150 }), [
+    { name: "Hardware", amount: 200 },
     { name: "Robots", amount: 200 },
   ]);
 });
 
-test("planBoostPurchases buys nothing when the warehouse is full", () => {
-  const plan = planBoostPurchases({ targets: { Hardware: 500 }, stored: {}, freeSpace: 0 });
-  assert.deepEqual(plan, []);
+test("planBoostPurchases scales every purchase down together when money is short", () => {
+  assert.deepEqual(boost({ targets: { Hardware: 400, Robots: 400 }, budget: 200e3 }), [
+    { name: "Hardware", amount: 100 },
+    { name: "Robots", amount: 100 },
+  ]);
 });
+
+test("planBoostPurchases buys nothing in a full warehouse or with no money", () => {
+  assert.deepEqual(boost({ freeSpace: 0 }), []);
+  assert.deepEqual(boost({ freeSpace: -5 }), []);
+  assert.deepEqual(boost({ budget: -1e9 }), []);
+});
+
+// ── planUpgrades / nextResearch ─────────────────────────────────────────────
+
+test("planUpgrades levels the cheapest upgrades the budget covers", () => {
+  const costs = { "Smart Factories": 2e9, "Smart Storage": 1e9, FocusWires: 5e9 };
+  assert.deepEqual(planUpgrades(costs, 4e9), ["Smart Storage", "Smart Factories"]);
+});
+
+test("planUpgrades buys nothing on an empty or negative budget", () => {
+  assert.deepEqual(planUpgrades({ "Smart Storage": 1e9 }, 0), []);
+  assert.deepEqual(planUpgrades({ "Smart Storage": 1e9 }, -5e9), []);
+});
+
+const RESEARCH = ["Hi-Tech R&D Laboratory", "Market-TA.I", "Market-TA.II"];
+const RESEARCH_COST = { "Hi-Tech R&D Laboratory": 5000, "Market-TA.I": 20000, "Market-TA.II": 50000 };
+const costOf = (name) => RESEARCH_COST[name];
+
+test("nextResearch picks the first unowned research it can afford", () => {
+  assert.deepEqual(nextResearch(RESEARCH, [], costOf, 10000, 0.5), { name: "Hi-Tech R&D Laboratory", cost: 5000 });
+  assert.deepEqual(nextResearch(RESEARCH, ["Hi-Tech R&D Laboratory"], costOf, 40000, 0.5), {
+    name: "Market-TA.I",
+    cost: 20000,
+  });
+});
+
+test("nextResearch waits for points rather than skipping ahead", () => {
+  assert.equal(nextResearch(RESEARCH, ["Hi-Tech R&D Laboratory"], costOf, 39999, 0.5), null);
+});
+
+test("nextResearch has nothing left once everything is owned", () => {
+  assert.equal(nextResearch(RESEARCH, RESEARCH, costOf, 1e9, 1), null);
+});
+
+
+// ── trackOffer / shouldAcceptOffer ──────────────────────────────────────────
+
+test("trackOffer starts a record on the first offer of a round", () => {
+  assert.deepEqual(trackOffer(null, { round: 1, funds: 100 }, 5, 0.02, 10), {
+    round: 1, best: 100, mark: 100, markAt: 5, seenAt: 5,
+  });
+  const old = { round: 1, best: 500, mark: 500, markAt: 0, seenAt: 4 };
+  assert.deepEqual(trackOffer(old, { round: 2, funds: 100 }, 5, 0.02, 10), {
+    round: 2, best: 100, mark: 100, markAt: 5, seenAt: 5,
+  });
+});
+
+test("trackOffer moves the mark only on growth of at least minGrowth", () => {
+  const track = { round: 1, best: 100, mark: 100, markAt: 0, seenAt: 0 };
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 101 }, 5, 0.02, 10), {
+    round: 1, best: 101, mark: 100, markAt: 0, seenAt: 5,
+  });
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 110 }, 5, 0.02, 10), {
+    round: 1, best: 110, mark: 110, markAt: 5, seenAt: 5,
+  });
+});
+
+test("trackOffer keeps the best offer when the offer drops", () => {
+  const track = { round: 1, best: 100, mark: 100, markAt: 0, seenAt: 0 };
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 90 }, 5, 0.02, 10), { ...track, seenAt: 5 });
+});
+
+// The corporation stands still while the game is closed. Time nobody watched the offer is not
+// time it spent not growing, so a gap restarts the record.
+test("trackOffer restarts the record after a gap in watching", () => {
+  const track = { round: 1, best: 100, mark: 100, markAt: 0, seenAt: 0 };
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 100 }, 20, 0.02, 10), {
+    round: 1, best: 100, mark: 100, markAt: 20, seenAt: 20,
+  });
+});
+
+const RULE = { plateauMs: 1000, dip: 0.05 };
+
+test("shouldAcceptOffer waits until the offer has stopped growing", () => {
+  const track = { round: 1, best: 100, mark: 100, markAt: 0 };
+  assert.equal(shouldAcceptOffer(track, { funds: 100 }, 999, RULE), false);
+  assert.equal(shouldAcceptOffer(track, { funds: 100 }, 1000, RULE), true);
+});
+
+test("shouldAcceptOffer doesn't sign at a dip", () => {
+  const track = { round: 1, best: 100, mark: 100, markAt: 0 };
+  assert.equal(shouldAcceptOffer(track, { funds: 95 }, 5000, RULE), true);
+  assert.equal(shouldAcceptOffer(track, { funds: 94 }, 5000, RULE), false);
+});
+
+test("shouldAcceptOffer never accepts an empty offer", () => {
+  assert.equal(shouldAcceptOffer({ round: 1, best: 0, mark: 0, markAt: 0 }, { funds: 0 }, 5000, RULE), false);
+});
+

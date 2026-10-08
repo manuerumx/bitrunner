@@ -42,8 +42,12 @@ export const MANAGERS = [
   { id: "gang", script: "/src/advanced/gang-manager.js", name: "Gang Manager", priority: 8, phase: 6 },
   { id: "sleeve", script: "/src/advanced/sleeve-manager.js", name: "Sleeve Manager", priority: 9, phase: 6 },
   { id: "bladeburner", script: "/src/advanced/bladeburner-manager.js", name: "Bladeburner", priority: 10, phase: 6 },
-  { id: "corp", script: "/src/advanced/corp-manager.js", name: "Corporation", priority: 11, phase: 6 },
-  { id: "corp-boost", script: "/src/tools/corp-boost.js", name: "Corp Boost", priority: 11.5, phase: 6, oneShot: true },
+  { id: "corp-setup", script: "/src/tools/corp-setup.js", name: "Corp Setup", priority: 11, phase: 6, oneShot: true },
+  { id: "corp-warehouse", script: "/src/tools/corp-warehouse.js", name: "Corp Warehouses", priority: 11.1, phase: 6, oneShot: true },
+  { id: "corp-office", script: "/src/tools/corp-office.js", name: "Corp Offices", priority: 11.2, phase: 6, oneShot: true },
+  { id: "corp-boost", script: "/src/tools/corp-boost.js", name: "Corp Boost", priority: 11.3, phase: 6, oneShot: true },
+  { id: "corp-research", script: "/src/tools/corp-research.js", name: "Corp Research", priority: 11.4, phase: 6, oneShot: true },
+  { id: "corp-invest", script: "/src/tools/corp-invest.js", name: "Corp Investment", priority: 11.5, phase: 6, oneShot: true },
 ];
 
 export const WORKER_SCRIPTS = ["/src/hack.js", "/src/grow.js", "/src/weaken.js", "/src/share.js", "/src/xp.js"];
@@ -133,17 +137,57 @@ export const DEFAULTS = {
   // tested every item against the same start-of-cycle cash figure, so one cycle could
   // spend many multiples of it. Each item must also cost under 1% of cash.
   gangEquipBudgetPercent: 0.05,
-  // Boost materials multiply a division's production while held. Targets are per city and
-  // deliberately modest — an overfilled warehouse stalls production outright.
-  //
-  // KEY ORDER IS PRIORITY. planBoostPurchases walks these in insertion order and consumes
-  // the free warehouse space as it goes, so on a small warehouse the later keys get starved.
-  // Real Estate is last because it is by far the bulkiest; if you are running an industry
-  // where it dominates the multiplier (rather than Agriculture, where it doesn't), move it
-  // to the front.
-  corpBoostTargets: { Hardware: 125, Robots: 10, "AI Cores": 75, "Real Estate": 2700 },
-  // Fraction of a warehouse left empty for output goods after boost materials are stocked.
+  // ── Corporation (tools/corp-*.js) ──
+  corpName: "Bitrunner",
+  corpIndustry: "Agriculture",
+  // Name for the division corp-setup.js creates. An existing division of corpIndustry is used
+  // whatever its name, so one made by hand in the UI is never duplicated.
+  corpDivisionName: "Agri",
+  // Corp funds no corp tool spends: salaries are paid every cycle.
+  corpCashReserve: 1e9,
+  // Most of the money above the reserve one office or warehouse growth step may take.
+  // Buying a city's first warehouse ignores it: without one the city produces nothing.
+  corpStructureSpend: 0.25,
+  // Offices grow toward this many employees per city, corpOfficeStep at a time.
+  corpOfficeSize: 9,
+  corpOfficeStep: 3,
+  // Share of each office's staff per job (see planJobs). Every job gets one person before
+  // any gets a second, in this key order, so a 3-person office is Operations, Engineer, Business.
+  corpJobWeights: { Operations: 2, Engineer: 2, Business: 1, Management: 2, "Research & Development": 2 },
+  // Tea / a party once average energy / morale falls below this fraction of its max.
+  corpWellbeingFloor: 0.95,
+  corpPartyCostPerEmployee: 500e3,
+  // A warehouse grows one level once it is this full. Keep it below 1 - corpWarehouseHeadroom:
+  // corp-boost.js stops filling there, so a higher threshold is only reached by unsold output.
+  corpWarehouseUpgradeAt: 0.55,
+  // Fraction of each warehouse corp-boost.js leaves free of boost materials, for inputs and output.
   corpWarehouseHeadroom: 0.4,
+  // Corp-wide upgrades corp-research.js levels, cheapest first, within corpUpgradeSpend of the
+  // money above the reserve per run.
+  corpUpgrades: [
+    "Smart Storage", "Smart Factories", "FocusWires", "Neural Accelerators", "Speech Processor Implants",
+    "Nuoptimal Nootropic Injector Implants", "ABC SalesBots", "Wilson Analytics", "Project Insight",
+  ],
+  corpUpgradeSpend: 0.05,
+  // Research per division, bought strictly in this order; prerequisites come first. One
+  // research may take at most corpResearchSpend of the division's points.
+  corpResearch: [
+    "Hi-Tech R&D Laboratory", "Market-TA.I", "Market-TA.II", "AutoBrew", "AutoPartyManager",
+    "Overclock", "Sti.mu", "Automatic Drug Administration", "Go-Juice", "CPH4 Injections",
+  ],
+  corpResearchSpend: 0.5,
+  // Funding rounds corp-invest.js takes before going public. Each is accepted once the offer
+  // has grown less than corpInvestMinGrowth for corpInvestPlateauMs and is within
+  // corpInvestDip of the best offer seen in that round.
+  corpInvestRounds: 4,
+  corpInvestPlateauMs: 15 * 60 * 1000,
+  corpInvestMinGrowth: 0.02,
+  corpInvestDip: 0.05,
+  // A gap longer than this between looks at the offer (the game was closed, or corp-invest.js
+  // couldn't run) restarts the round's record instead of counting as a plateau.
+  corpInvestMaxGapMs: 10 * 60 * 1000,
+  // Share of profit paid to shareholders (you) once public. Capped at the game's dividendMaxRate.
+  corpDividendRate: 0.1,
   batchSpacingMs: 200,
   // HWGW pipeline depth per target per cycle. The old flat cap of 100 batches was wrong for both
   // ends: it under-filled slow high-tier targets (whose long weakenTime needs >100 batches just to
