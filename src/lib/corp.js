@@ -124,3 +124,72 @@ export function planSetup({ unlocks, cities, allCities, unlockCosts, cityCost, f
   return { buy, waiting: null };
 }
 
+
+// ── Offices ─────────────────────────────────────────────────────────────────
+
+/**
+ * How many employees each job gets in an office of `size`.
+ *
+ * One of each job first, in the key order of `weights`, so a 3-person office gets the first
+ * three jobs. Every later hire goes to the job whose (count + 1) / weight is lowest, ties to
+ * the earlier key. Jobs with weight 0 get nobody.
+ *
+ * @param {number} size
+ * @param {Record<string, number>} weights
+ * @returns {Record<string, number>}
+ */
+export function planJobs(size, weights) {
+  const jobs = Object.keys(weights).filter((job) => weights[job] > 0);
+  /** @type {Record<string, number>} */
+  const counts = Object.fromEntries(jobs.map((job) => [job, 0]));
+  for (let i = 0; i < size && jobs.length > 0; i++) {
+    let pick = jobs[0];
+    let best = Infinity;
+    for (const job of jobs) {
+      const score = counts[job] === 0 ? -1 : (counts[job] + 1) / weights[job];
+      if (score < best) {
+        best = score;
+        pick = job;
+      }
+    }
+    counts[pick]++;
+  }
+  return counts;
+}
+
+/**
+ * The setJobAssignment calls that take an office from `current` to `target` head counts, in an
+ * order that works: raising a job draws from Unassigned, so every cut comes first. Jobs not in
+ * `target` (Intern, say) are cut to zero. Unassigned itself is never set.
+ *
+ * @param {Record<string, number>} current employeeJobs from getOffice
+ * @param {Record<string, number>} target from planJobs
+ * @returns {Array<{job: string, count: number}>}
+ */
+export function orderJobAssignments(current, target) {
+  const cuts = [];
+  const raises = [];
+  for (const job of new Set([...Object.keys(current), ...Object.keys(target)])) {
+    if (job === "Unassigned") continue;
+    const have = current[job] ?? 0;
+    const want = target[job] ?? 0;
+    if (want < have) cuts.push({ job, count: want });
+    else if (want > have) raises.push({ job, count: want });
+  }
+  return [...cuts, ...raises];
+}
+
+/**
+ * Whether an office needs tea (energy) or a party (morale): either below `floor` of its max.
+ *
+ * @param {{avgEnergy: number, maxEnergy: number, avgMorale: number, maxMorale: number}} office
+ * @param {number} floor
+ * @returns {{tea: boolean, party: boolean}}
+ */
+export function wellbeingActions(office, floor) {
+  return {
+    tea: office.avgEnergy < office.maxEnergy * floor,
+    party: office.avgMorale < office.maxMorale * floor,
+  };
+}
+

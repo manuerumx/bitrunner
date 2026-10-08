@@ -43,6 +43,7 @@ export const MANAGERS = [
   { id: "sleeve", script: "/src/advanced/sleeve-manager.js", name: "Sleeve Manager", priority: 9, phase: 6 },
   { id: "bladeburner", script: "/src/advanced/bladeburner-manager.js", name: "Bladeburner", priority: 10, phase: 6 },
   { id: "corp-setup", script: "/src/tools/corp-setup.js", name: "Corp Setup", priority: 11, phase: 6, oneShot: true },
+  { id: "corp-office", script: "/src/tools/corp-office.js", name: "Corp Offices", priority: 11.2, phase: 6, oneShot: true },
   { id: "corp-boost", script: "/src/tools/corp-boost.js", name: "Corp Boost", priority: 11.5, phase: 6, oneShot: true },
 ];
 
@@ -141,6 +142,18 @@ export const DEFAULTS = {
   corpDivisionName: "Agri",
   // Corp funds no corp tool spends: salaries are paid every cycle.
   corpCashReserve: 1e9,
+  // Most of the money above the reserve one office or warehouse growth step may take.
+  // Buying a city's first warehouse ignores it: without one the city produces nothing.
+  corpStructureSpend: 0.25,
+  // Offices grow toward this many employees per city, corpOfficeStep at a time.
+  corpOfficeSize: 9,
+  corpOfficeStep: 3,
+  // Share of each office's staff per job (see planJobs). Every job gets one person before
+  // any gets a second, in this key order, so a 3-person office is Operations, Engineer, Business.
+  corpJobWeights: { Operations: 2, Engineer: 2, Business: 1, Management: 2, "Research & Development": 2 },
+  // Tea / a party once average energy / morale falls below this fraction of its max.
+  corpWellbeingFloor: 0.95,
+  corpPartyCostPerEmployee: 500e3,
   // Boost materials multiply a division's production while held. Targets are per city and
   // deliberately modest — an overfilled warehouse stalls production outright.
   //

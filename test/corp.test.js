@@ -1,6 +1,14 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BOOST_MATERIALS, planBoostPurchases, planSetup, selectMaterialsToSell } from "/src/lib/corp.js";
+import {
+  BOOST_MATERIALS,
+  orderJobAssignments,
+  planBoostPurchases,
+  planJobs,
+  planSetup,
+  selectMaterialsToSell,
+  wellbeingActions,
+} from "/src/lib/corp.js";
 
 // Material shape as returned by ns.corporation.getMaterial() — only the fields read here.
 function mat(name, over = {}) {
@@ -127,5 +135,69 @@ test("planSetup never spends the reserve", () => {
 test("planSetup has nothing to do once everything is owned", () => {
   const plan = setup({ unlocks: ["Smart Supply", "Warehouse API", "Office API"], cities: ALL_CITIES });
   assert.deepEqual(plan, { buy: [], waiting: null });
+});
+
+
+// ── planJobs / orderJobAssignments / wellbeingActions ───────────────────────
+
+const WEIGHTS = { Operations: 2, Engineer: 2, Business: 1, Management: 2, "Research & Development": 2 };
+
+test("planJobs gives one of each job first, in key order", () => {
+  assert.deepEqual(planJobs(3, WEIGHTS), {
+    Operations: 1, Engineer: 1, Business: 1, Management: 0, "Research & Development": 0,
+  });
+});
+
+test("planJobs splits a larger office by weight", () => {
+  assert.deepEqual(planJobs(9, WEIGHTS), {
+    Operations: 2, Engineer: 2, Business: 1, Management: 2, "Research & Development": 2,
+  });
+});
+
+test("planJobs leaves an empty office empty", () => {
+  assert.deepEqual(planJobs(0, WEIGHTS), {
+    Operations: 0, Engineer: 0, Business: 0, Management: 0, "Research & Development": 0,
+  });
+});
+
+test("planJobs never staffs a job with weight 0", () => {
+  assert.deepEqual(planJobs(2, { Operations: 1, Engineer: 0 }), { Operations: 2 });
+});
+
+test("orderJobAssignments fills jobs from Unassigned", () => {
+  const current = { Operations: 0, Engineer: 0, Business: 0, Unassigned: 3 };
+  const target = { Operations: 1, Engineer: 1, Business: 1 };
+  assert.deepEqual(orderJobAssignments(current, target), [
+    { job: "Operations", count: 1 },
+    { job: "Engineer", count: 1 },
+    { job: "Business", count: 1 },
+  ]);
+});
+
+// Raising a job draws from Unassigned, so the cuts have to run first.
+test("orderJobAssignments makes every cut before any raise", () => {
+  const current = { Operations: 0, Engineer: 3, Unassigned: 0 };
+  const target = { Operations: 2, Engineer: 1 };
+  assert.deepEqual(orderJobAssignments(current, target), [
+    { job: "Engineer", count: 1 },
+    { job: "Operations", count: 2 },
+  ]);
+});
+
+test("orderJobAssignments cuts jobs the plan doesn't use, such as Intern", () => {
+  const current = { Operations: 0, Intern: 2, Unassigned: 0 };
+  assert.deepEqual(orderJobAssignments(current, { Operations: 2 }), [
+    { job: "Intern", count: 0 },
+    { job: "Operations", count: 2 },
+  ]);
+});
+
+test("orderJobAssignments has nothing to do when the office matches", () => {
+  assert.deepEqual(orderJobAssignments({ Operations: 2, Unassigned: 0 }, { Operations: 2 }), []);
+});
+
+test("wellbeingActions asks for tea and a party below the floor", () => {
+  const office = { avgEnergy: 90, maxEnergy: 100, avgMorale: 99, maxMorale: 100 };
+  assert.deepEqual(wellbeingActions(office, 0.95), { tea: true, party: false });
 });
 
