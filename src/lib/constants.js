@@ -42,6 +42,7 @@ export const MANAGERS = [
   { id: "gang", script: "/src/advanced/gang-manager.js", name: "Gang Manager", priority: 8, phase: 6 },
   { id: "sleeve", script: "/src/advanced/sleeve-manager.js", name: "Sleeve Manager", priority: 9, phase: 6 },
   { id: "bladeburner", script: "/src/advanced/bladeburner-manager.js", name: "Bladeburner", priority: 10, phase: 6 },
+  { id: "corp-setup", script: "/src/tools/corp-setup.js", name: "Corp Setup", priority: 11, phase: 6, oneShot: true },
   { id: "corp-boost", script: "/src/tools/corp-boost.js", name: "Corp Boost", priority: 11.5, phase: 6, oneShot: true },
 ];
 
@@ -132,6 +133,14 @@ export const DEFAULTS = {
   // tested every item against the same start-of-cycle cash figure, so one cycle could
   // spend many multiples of it. Each item must also cost under 1% of cash.
   gangEquipBudgetPercent: 0.05,
+  // ── Corporation (tools/corp-*.js) ──
+  corpName: "Bitrunner",
+  corpIndustry: "Agriculture",
+  // Name for the division corp-setup.js creates. An existing division of corpIndustry is used
+  // whatever its name, so one made by hand in the UI is never duplicated.
+  corpDivisionName: "Agri",
+  // Corp funds no corp tool spends: salaries are paid every cycle.
+  corpCashReserve: 1e9,
   // Boost materials multiply a division's production while held. Targets are per city and
   // deliberately modest — an overfilled warehouse stalls production outright.
   //

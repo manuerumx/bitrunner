@@ -69,3 +69,58 @@ export function planBoostPurchases({ targets, stored, freeSpace }) {
 
   return plan;
 }
+
+// ── Setup ───────────────────────────────────────────────────────────────────
+
+// One-time unlocks corp-setup.js buys, on either side of the city expansion. Smart Supply
+// comes before the cities: without it nothing buys Agriculture's Water and Chemicals, so
+// nothing is produced. The API unlocks come last: what they gate (hiring, warehouses, sell
+// orders) can be done by hand in the UI for free, and they cost a large share of the seed money.
+/** @type {CorpUnlockName[]} */
+export const SETUP_UNLOCKS_FIRST = ["Smart Supply"];
+/** @type {CorpUnlockName[]} */
+export const SETUP_UNLOCKS_LAST = ["Warehouse API", "Office API"];
+
+/** @typedef {{kind: "unlock" | "city", name: string, cost: number}} SetupStep */
+
+/**
+ * @param {"unlock" | "city"} kind
+ * @param {string} name
+ * @param {number} cost
+ * @returns {SetupStep}
+ */
+const setupStep = (kind, name, cost) => ({ kind, name, cost });
+
+/**
+ * The setup purchases to make now, in order, and the first one still waiting for money.
+ *
+ * Order: SETUP_UNLOCKS_FIRST, the cities the division isn't in yet, SETUP_UNLOCKS_LAST. It is
+ * strict: planning stops at the first step that doesn't fit in `funds - reserve`, so a cheap
+ * later step never spends money an earlier, more important one is waiting for.
+ *
+ * Creating the corporation and the division come before this (corp-setup.js does them
+ * directly): the city list only exists once there is a division.
+ *
+ * @param {{unlocks: string[], cities: string[], allCities: string[],
+ *          unlockCosts: Record<string, number>, cityCost: number,
+ *          funds: number, reserve: number}} input
+ * @returns {{buy: SetupStep[], waiting: SetupStep | null}}
+ */
+export function planSetup({ unlocks, cities, allCities, unlockCosts, cityCost, funds, reserve }) {
+  const missing = (/** @type {string[]} */ names) => names.filter((name) => !unlocks.includes(name));
+  const steps = [
+    ...missing(SETUP_UNLOCKS_FIRST).map((name) => setupStep("unlock", name, unlockCosts[name])),
+    ...allCities.filter((city) => !cities.includes(city)).map((name) => setupStep("city", name, cityCost)),
+    ...missing(SETUP_UNLOCKS_LAST).map((name) => setupStep("unlock", name, unlockCosts[name])),
+  ];
+
+  const buy = [];
+  let budget = funds - reserve;
+  for (const step of steps) {
+    if (step.cost > budget) return { buy, waiting: step };
+    buy.push(step);
+    budget -= step.cost;
+  }
+  return { buy, waiting: null };
+}
+

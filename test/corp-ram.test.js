@@ -36,6 +36,7 @@ const BASE_RAM = 1.6;
 // names. The other ns calls these scripts make (tprint, print, read, write, enums, ports) are
 // 0 GB. Keep `ns.corporation.<fn>` out of comments: this count can't tell them from code.
 const CORP_SCRIPTS = {
+  "src/tools/corp-setup.js": 131.6,
   "src/tools/corp-boost.js": 81.6,
 };
 

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { BOOST_MATERIALS, planBoostPurchases, selectMaterialsToSell } from "/src/lib/corp.js";
+import { BOOST_MATERIALS, planBoostPurchases, planSetup, selectMaterialsToSell } from "/src/lib/corp.js";
 
 // Material shape as returned by ns.corporation.getMaterial() — only the fields read here.
 function mat(name, over = {}) {
@@ -82,3 +82,50 @@ test("planBoostPurchases buys nothing when the warehouse is full", () => {
   const plan = planBoostPurchases({ targets: { Hardware: 500 }, stored: {}, freeSpace: 0 });
   assert.deepEqual(plan, []);
 });
+
+// ── planSetup ───────────────────────────────────────────────────────────────
+
+const ALL_CITIES = ["Aevum", "Chongqing", "Sector-12", "New Tokyo", "Ishima", "Volhaven"];
+const UNLOCK_COSTS = { "Smart Supply": 25e9, "Warehouse API": 50e9, "Office API": 50e9 };
+
+function setup(over = {}) {
+  return planSetup({
+    unlocks: [],
+    cities: ["Sector-12"],
+    allCities: ALL_CITIES,
+    unlockCosts: UNLOCK_COSTS,
+    cityCost: 4e9,
+    funds: 1e12,
+    reserve: 1e9,
+    ...over,
+  });
+}
+
+const names = (plan) => plan.buy.map((step) => step.name);
+
+test("planSetup buys Smart Supply, then the missing cities, then the API unlocks", () => {
+  const plan = setup();
+  assert.deepEqual(names(plan), [
+    "Smart Supply", "Aevum", "Chongqing", "New Tokyo", "Ishima", "Volhaven", "Warehouse API", "Office API",
+  ]);
+  assert.equal(plan.waiting, null);
+});
+
+// A cheap later step must not spend money an earlier, more important one is waiting for.
+test("planSetup stops at the first step it can't afford", () => {
+  const plan = setup({ funds: 1e9 + 25e9 + 8e9 + 1 });
+  assert.deepEqual(names(plan), ["Smart Supply", "Aevum", "Chongqing"]);
+  assert.deepEqual(plan.waiting, { kind: "city", name: "New Tokyo", cost: 4e9 });
+});
+
+test("planSetup never spends the reserve", () => {
+  const plan = setup({ funds: 25e9 + 1e9 - 1 });
+  assert.deepEqual(plan.buy, []);
+  assert.equal(plan.waiting?.name, "Smart Supply");
+});
+
+test("planSetup has nothing to do once everything is owned", () => {
+  const plan = setup({ unlocks: ["Smart Supply", "Warehouse API", "Office API"], cities: ALL_CITIES });
+  assert.deepEqual(plan, { buy: [], waiting: null });
+});
+
