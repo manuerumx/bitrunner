@@ -266,28 +266,33 @@ export function nextResearch(priority, owned, costOf, points, spend) {
 
 // ── Investment ──────────────────────────────────────────────────────────────
 
-/** @typedef {{round: number, best: number, mark: number, markAt: number}} OfferTrack */
+/** @typedef {{round: number, best: number, mark: number, markAt: number, seenAt: number}} OfferTrack */
 
 /**
  * Update the record of this funding round's offers. `best` is the highest offer seen. `mark`
  * and `markAt` are the last offer that beat the previous mark by at least `minGrowth`, and
- * when it came. A new round starts a new record.
+ * when it came. `seenAt` is when the offer was last looked at.
+ *
+ * A new round starts a new record, and so does a gap of more than `maxGapMs` since the last
+ * look: the corporation stands still while the game is closed, so unwatched time is not time
+ * the offer spent not growing.
  *
  * @param {OfferTrack | null} track
  * @param {{round: number, funds: number}} offer
  * @param {number} now ms
  * @param {number} minGrowth 0.02 = 2%
+ * @param {number} maxGapMs
  * @returns {OfferTrack}
  */
-export function trackOffer(track, offer, now, minGrowth) {
-  if (!track || track.round !== offer.round) {
-    return { round: offer.round, best: offer.funds, mark: offer.funds, markAt: now };
+export function trackOffer(track, offer, now, minGrowth, maxGapMs) {
+  if (!track || track.round !== offer.round || now - track.seenAt > maxGapMs) {
+    return { round: offer.round, best: offer.funds, mark: offer.funds, markAt: now, seenAt: now };
   }
   const best = Math.max(track.best, offer.funds);
   if (offer.funds > track.mark * (1 + minGrowth)) {
-    return { round: offer.round, best, mark: offer.funds, markAt: now };
+    return { round: offer.round, best, mark: offer.funds, markAt: now, seenAt: now };
   }
-  return { ...track, best };
+  return { ...track, best, seenAt: now };
 }
 
 /**

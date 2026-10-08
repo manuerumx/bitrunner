@@ -83,6 +83,9 @@ export function makeCorpNs({
   upgradeCosts = {},
   researchCosts = {},
   prices = {},
+  revenue = 2e6,
+  expenses = 1e6,
+  bonusTime = 0,
 } = {}) {
   const state = {
     hasCorp,
@@ -160,6 +163,7 @@ export function makeCorpNs({
         state.hasCorp = true;
         return true;
       },
+      getBonusTime: () => bonusTime,
       getConstants: () => ({
         officeInitialCost: 4e9,
         warehouseInitialCost: 5e9,
@@ -170,8 +174,8 @@ export function makeCorpNs({
         corp();
         return {
           funds: state.funds,
-          revenue: 2e6,
-          expenses: 1e6,
+          revenue,
+          expenses,
           public: state.public,
           dividendRate: state.dividendRate,
           divisions: Object.keys(state.divisions),

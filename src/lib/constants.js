@@ -157,8 +157,9 @@ export const DEFAULTS = {
   // Tea / a party once average energy / morale falls below this fraction of its max.
   corpWellbeingFloor: 0.95,
   corpPartyCostPerEmployee: 500e3,
-  // A warehouse grows one level once it is this full.
-  corpWarehouseUpgradeAt: 0.8,
+  // A warehouse grows one level once it is this full. Keep it below 1 - corpWarehouseHeadroom:
+  // corp-boost.js stops filling there, so a higher threshold is only reached by unsold output.
+  corpWarehouseUpgradeAt: 0.55,
   // Fraction of each warehouse corp-boost.js leaves free of boost materials, for inputs and output.
   corpWarehouseHeadroom: 0.4,
   // Corp-wide upgrades corp-research.js levels, cheapest first, within corpUpgradeSpend of the
@@ -182,6 +183,9 @@ export const DEFAULTS = {
   corpInvestPlateauMs: 15 * 60 * 1000,
   corpInvestMinGrowth: 0.02,
   corpInvestDip: 0.05,
+  // A gap longer than this between looks at the offer (the game was closed, or corp-invest.js
+  // couldn't run) restarts the round's record instead of counting as a plateau.
+  corpInvestMaxGapMs: 10 * 60 * 1000,
   // Share of profit paid to shareholders (you) once public. Capped at the game's dividendMaxRate.
   corpDividendRate: 0.1,
   batchSpacingMs: 200,

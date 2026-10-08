@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { main } from "/src/tools/corp-warehouse.js";
+import { DEFAULTS } from "/src/lib/constants.js";
 import { callsTo, makeCorpNs, makeDivision, makeOffice, makeWarehouse } from "./corp-mock.mjs";
 
 function twoCities(warehouses, over = {}) {
@@ -55,3 +56,9 @@ test("dry changes nothing", async () => {
   assert.deepEqual(state.calls, []);
 });
 
+
+// corp-boost.js fills a warehouse to 1 - corpWarehouseHeadroom with boost materials and stops.
+// If growth waited for more than that, warehouses would only grow when output piles up unsold.
+test("warehouses grow before the boost share alone fills them", () => {
+  assert.ok(DEFAULTS.corpWarehouseUpgradeAt < 1 - DEFAULTS.corpWarehouseHeadroom);
+});
