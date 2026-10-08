@@ -6,69 +6,14 @@
 
 // Materials that multiply a division's production while they are HELD in the warehouse.
 // They are inputs to the production multiplier, never output to be sold: liquidating them
-// liquidates the multiplier. corp-manager.js used to sell all four on the same
-// "stored > 0 && producing" rule it applied to actual output goods.
+// liquidates the multiplier.
 /** @type {CorpMaterialName[]} */
 export const BOOST_MATERIALS = ["Hardware", "Robots", "AI Cores", "Real Estate"];
 
-// Materials the manager inspects each cycle: the common outputs plus the four boosters.
-// Boosters are inspected (not skipped) so selectMaterialsToSell stays the one place that
-// decides what may be sold.
-/** @type {CorpMaterialName[]} */
-export const TRACKED_MATERIALS = ["Food", "Plants", ...BOOST_MATERIALS];
-
-// Membership checks run against plain strings; BOOST_MATERIALS itself keeps the narrow
-// CorpMaterialName type so it can be passed straight to the corporation API.
-const BOOST_NAMES = /** @type {string[]} */ (BOOST_MATERIALS);
-
-/**
- * Which of a division's materials should be put on sale this cycle.
- *
- * Sell only what the division actually produces and has in stock. Anything with zero
- * production is bought stock (boost materials, or inputs) rather than output.
- *
- * Generic in the name type so a CorpMaterialName[] input yields a CorpMaterialName[]
- * output, ready for ns.corporation.sellMaterial.
- *
- * @template {string} T
- * @param {Array<{name: T, stored: number, productionAmount: number}>} materials
- * @returns {T[]} material names to sell
- */
-export function selectMaterialsToSell(materials) {
-  return materials
-    .filter((m) => !BOOST_NAMES.includes(m.name))
-    .filter((m) => m.stored > 0 && m.productionAmount > 0)
-    .map((m) => m.name);
-}
-
-/**
- * How much of each boost material to buy, toward a per-industry target.
- *
- * Warehouse space is shared across every material, so the free space is consumed as the
- * plan is built — an overfilled warehouse stalls production outright, which costs more
- * than the boost is worth.
- *
- * `targets` is walked in insertion order, which makes **key order the priority order**: on a
- * warehouse too small for everything, earlier keys fill and later ones are starved. See the
- * note on DEFAULTS.corpBoostTargets in constants.js before reordering it.
- *
- * @param {{targets: Record<string, number>, stored: Record<string, number>, freeSpace: number}} input
- * @returns {Array<{name: string, amount: number}>}
- */
-export function planBoostPurchases({ targets, stored, freeSpace }) {
-  const plan = [];
-  let space = freeSpace;
-
-  for (const [name, target] of Object.entries(targets)) {
-    const shortfall = target - (stored[name] ?? 0);
-    const amount = Math.min(shortfall, space);
-    if (amount <= 0) continue;
-    plan.push({ name, amount });
-    space -= amount;
-  }
-
-  return plan;
-}
+// Warehouse space per unit of each boost material (getMaterialData(name).size). Hardcoded to
+// keep getMaterialData's 10 GB out of corp-boost.js.
+/** @type {Record<string, number>} */
+export const BOOST_SIZES = { Hardware: 0.06, Robots: 0.5, "AI Cores": 0.1, "Real Estate": 0.005 };
 
 // ── Setup ───────────────────────────────────────────────────────────────────
 
@@ -193,3 +138,88 @@ export function wellbeingActions(office, floor) {
   };
 }
 
+// ── Boost materials ─────────────────────────────────────────────────────────
+
+/**
+ * An industry's boost factors keyed by material name.
+ *
+ * @param {{hardwareFactor?: number, robotFactor?: number, aiCoreFactor?: number, realEstateFactor?: number}} data
+ *   getIndustryData's result
+ * @returns {Record<string, number>}
+ */
+export function boostFactors(data) {
+  return {
+    Hardware: data.hardwareFactor ?? 0,
+    Robots: data.robotFactor ?? 0,
+    "AI Cores": data.aiCoreFactor ?? 0,
+    "Real Estate": data.realEstateFactor ?? 0,
+  };
+}
+
+/**
+ * The boost-material mix that maximizes a division's production for `space` units of room.
+ *
+ * The game's multiplier is (Π (1 + 0.002·xᵢ)^cᵢ)^0.73, xᵢ the amount held and cᵢ the industry's
+ * factor. Maximizing Σ cᵢ·ln(1 + 0.002·xᵢ) subject to Σ sᵢ·xᵢ = space (sᵢ the size per unit)
+ * gives, by Lagrange multipliers:
+ *
+ *     xᵢ = cᵢ·(space + 500·Σsⱼ) / (sᵢ·Σcⱼ) − 500
+ *
+ * A negative xᵢ means the material isn't worth its room at this budget. The one with the
+ * lowest cᵢ/sᵢ is dropped and the rest re-solved, until every amount is positive.
+ *
+ * @param {Record<string, number>} factors per material; 0 or missing means unused
+ * @param {Record<string, number>} sizes space per unit
+ * @param {number} space
+ * @returns {Record<string, number>} whole units of each material in `sizes`
+ */
+export function optimalBoostAmounts(factors, sizes, space) {
+  /** @type {Record<string, number>} */
+  const result = Object.fromEntries(Object.keys(sizes).map((name) => [name, 0]));
+  if (space <= 0) return result;
+
+  let active = Object.keys(sizes).filter((name) => (factors[name] ?? 0) > 0);
+  while (active.length > 0) {
+    const sumC = active.reduce((total, name) => total + factors[name], 0);
+    const sumS = active.reduce((total, name) => total + sizes[name], 0);
+    const amount = (/** @type {string} */ name) => (factors[name] * (space + 500 * sumS)) / (sizes[name] * sumC) - 500;
+
+    const negative = active.filter((name) => amount(name) < 0);
+    if (negative.length === 0) {
+      // The epsilon keeps float error (20499.999...) from flooring a whole unit away.
+      for (const name of active) result[name] = Math.floor(amount(name) + 1e-6);
+      return result;
+    }
+    const value = (/** @type {string} */ name) => factors[name] / sizes[name];
+    const worst = negative.reduce((a, b) => (value(a) <= value(b) ? a : b));
+    active = active.filter((name) => name !== worst);
+  }
+  return result;
+}
+
+/**
+ * How much of each boost material to buy toward its target.
+ *
+ * Free warehouse space and money are both limits. When either runs short, every purchase is
+ * scaled down by the same fraction, so a tight budget keeps the optimal mix rather than
+ * filling up on whichever material happens to come first.
+ *
+ * @param {{targets: Record<string, number>, stored: Record<string, number>,
+ *          sizes: Record<string, number>, prices: Record<string, number>,
+ *          freeSpace: number, budget: number}} input
+ * @returns {Array<{name: string, amount: number}>}
+ */
+export function planBoostPurchases({ targets, stored, sizes, prices, freeSpace, budget }) {
+  const wanted = Object.entries(targets)
+    .map(([name, target]) => ({ name, amount: target - (stored[name] ?? 0) }))
+    .filter((want) => want.amount > 0);
+  if (wanted.length === 0) return [];
+
+  const space = wanted.reduce((total, want) => total + want.amount * sizes[want.name], 0);
+  const cost = wanted.reduce((total, want) => total + want.amount * prices[want.name], 0);
+  const scale = Math.min(1, Math.max(0, freeSpace) / space, Math.max(0, budget) / cost);
+
+  return wanted
+    .map((want) => ({ name: want.name, amount: Math.floor(want.amount * scale) }))
+    .filter((buy) => buy.amount > 0);
+}

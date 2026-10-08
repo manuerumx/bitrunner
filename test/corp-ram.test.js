@@ -39,7 +39,7 @@ const CORP_SCRIPTS = {
   "src/tools/corp-setup.js": 131.6,
   "src/tools/corp-warehouse.js": 121.6,
   "src/tools/corp-office.js": 151.6,
-  "src/tools/corp-boost.js": 81.6,
+  "src/tools/corp-boost.js": 141.6,
 };
 
 function walk(dir) {

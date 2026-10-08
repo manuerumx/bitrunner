@@ -45,7 +45,7 @@ export const MANAGERS = [
   { id: "corp-setup", script: "/src/tools/corp-setup.js", name: "Corp Setup", priority: 11, phase: 6, oneShot: true },
   { id: "corp-warehouse", script: "/src/tools/corp-warehouse.js", name: "Corp Warehouses", priority: 11.1, phase: 6, oneShot: true },
   { id: "corp-office", script: "/src/tools/corp-office.js", name: "Corp Offices", priority: 11.2, phase: 6, oneShot: true },
-  { id: "corp-boost", script: "/src/tools/corp-boost.js", name: "Corp Boost", priority: 11.5, phase: 6, oneShot: true },
+  { id: "corp-boost", script: "/src/tools/corp-boost.js", name: "Corp Boost", priority: 11.3, phase: 6, oneShot: true },
 ];
 
 export const WORKER_SCRIPTS = ["/src/hack.js", "/src/grow.js", "/src/weaken.js", "/src/share.js", "/src/xp.js"];
@@ -157,16 +157,7 @@ export const DEFAULTS = {
   corpPartyCostPerEmployee: 500e3,
   // A warehouse grows one level once it is this full.
   corpWarehouseUpgradeAt: 0.8,
-  // Boost materials multiply a division's production while held. Targets are per city and
-  // deliberately modest — an overfilled warehouse stalls production outright.
-  //
-  // KEY ORDER IS PRIORITY. planBoostPurchases walks these in insertion order and consumes
-  // the free warehouse space as it goes, so on a small warehouse the later keys get starved.
-  // Real Estate is last because it is by far the bulkiest; if you are running an industry
-  // where it dominates the multiplier (rather than Agriculture, where it doesn't), move it
-  // to the front.
-  corpBoostTargets: { Hardware: 125, Robots: 10, "AI Cores": 75, "Real Estate": 2700 },
-  // Fraction of a warehouse left empty for output goods after boost materials are stocked.
+  // Fraction of each warehouse corp-boost.js leaves free of boost materials, for inputs and output.
   corpWarehouseHeadroom: 0.4,
   batchSpacingMs: 200,
   // HWGW pipeline depth per target per cycle. The old flat cap of 100 batches was wrong for both
