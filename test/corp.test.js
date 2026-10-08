@@ -10,6 +10,8 @@ import {
   planJobs,
   planSetup,
   planUpgrades,
+  shouldAcceptOffer,
+  trackOffer,
   wellbeingActions,
 } from "/src/lib/corp.js";
 
@@ -246,5 +248,43 @@ test("nextResearch waits for points rather than skipping ahead", () => {
 
 test("nextResearch has nothing left once everything is owned", () => {
   assert.equal(nextResearch(RESEARCH, RESEARCH, costOf, 1e9, 1), null);
+});
+
+
+// ── trackOffer / shouldAcceptOffer ──────────────────────────────────────────
+
+test("trackOffer starts a record on the first offer of a round", () => {
+  assert.deepEqual(trackOffer(null, { round: 1, funds: 100 }, 5, 0.02), { round: 1, best: 100, mark: 100, markAt: 5 });
+  const old = { round: 1, best: 500, mark: 500, markAt: 0 };
+  assert.deepEqual(trackOffer(old, { round: 2, funds: 100 }, 5, 0.02), { round: 2, best: 100, mark: 100, markAt: 5 });
+});
+
+test("trackOffer moves the mark only on growth of at least minGrowth", () => {
+  const track = { round: 1, best: 100, mark: 100, markAt: 0 };
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 101 }, 5, 0.02), { round: 1, best: 101, mark: 100, markAt: 0 });
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 110 }, 5, 0.02), { round: 1, best: 110, mark: 110, markAt: 5 });
+});
+
+test("trackOffer keeps the best offer when the offer drops", () => {
+  const track = { round: 1, best: 100, mark: 100, markAt: 0 };
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 90 }, 5, 0.02), track);
+});
+
+const RULE = { plateauMs: 1000, dip: 0.05 };
+
+test("shouldAcceptOffer waits until the offer has stopped growing", () => {
+  const track = { round: 1, best: 100, mark: 100, markAt: 0 };
+  assert.equal(shouldAcceptOffer(track, { funds: 100 }, 999, RULE), false);
+  assert.equal(shouldAcceptOffer(track, { funds: 100 }, 1000, RULE), true);
+});
+
+test("shouldAcceptOffer doesn't sign at a dip", () => {
+  const track = { round: 1, best: 100, mark: 100, markAt: 0 };
+  assert.equal(shouldAcceptOffer(track, { funds: 95 }, 5000, RULE), true);
+  assert.equal(shouldAcceptOffer(track, { funds: 94 }, 5000, RULE), false);
+});
+
+test("shouldAcceptOffer never accepts an empty offer", () => {
+  assert.equal(shouldAcceptOffer({ round: 1, best: 0, mark: 0, markAt: 0 }, { funds: 0 }, 5000, RULE), false);
 });
 

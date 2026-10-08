@@ -47,6 +47,7 @@ export const MANAGERS = [
   { id: "corp-office", script: "/src/tools/corp-office.js", name: "Corp Offices", priority: 11.2, phase: 6, oneShot: true },
   { id: "corp-boost", script: "/src/tools/corp-boost.js", name: "Corp Boost", priority: 11.3, phase: 6, oneShot: true },
   { id: "corp-research", script: "/src/tools/corp-research.js", name: "Corp Research", priority: 11.4, phase: 6, oneShot: true },
+  { id: "corp-invest", script: "/src/tools/corp-invest.js", name: "Corp Investment", priority: 11.5, phase: 6, oneShot: true },
 ];
 
 export const WORKER_SCRIPTS = ["/src/hack.js", "/src/grow.js", "/src/weaken.js", "/src/share.js", "/src/xp.js"];
@@ -174,6 +175,15 @@ export const DEFAULTS = {
     "Overclock", "Sti.mu", "Automatic Drug Administration", "Go-Juice", "CPH4 Injections",
   ],
   corpResearchSpend: 0.5,
+  // Funding rounds corp-invest.js takes before going public. Each is accepted once the offer
+  // has grown less than corpInvestMinGrowth for corpInvestPlateauMs and is within
+  // corpInvestDip of the best offer seen in that round.
+  corpInvestRounds: 4,
+  corpInvestPlateauMs: 15 * 60 * 1000,
+  corpInvestMinGrowth: 0.02,
+  corpInvestDip: 0.05,
+  // Share of profit paid to shareholders (you) once public. Capped at the game's dividendMaxRate.
+  corpDividendRate: 0.1,
   batchSpacingMs: 200,
   // HWGW pipeline depth per target per cycle. The old flat cap of 100 batches was wrong for both
   // ends: it under-filled slow high-tier targets (whose long weakenTime needs >100 batches just to

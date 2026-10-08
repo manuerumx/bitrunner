@@ -263,3 +263,45 @@ export function nextResearch(priority, owned, costOf, points, spend) {
   return cost <= points * spend ? { name, cost } : null;
 }
 
+
+// ── Investment ──────────────────────────────────────────────────────────────
+
+/** @typedef {{round: number, best: number, mark: number, markAt: number}} OfferTrack */
+
+/**
+ * Update the record of this funding round's offers. `best` is the highest offer seen. `mark`
+ * and `markAt` are the last offer that beat the previous mark by at least `minGrowth`, and
+ * when it came. A new round starts a new record.
+ *
+ * @param {OfferTrack | null} track
+ * @param {{round: number, funds: number}} offer
+ * @param {number} now ms
+ * @param {number} minGrowth 0.02 = 2%
+ * @returns {OfferTrack}
+ */
+export function trackOffer(track, offer, now, minGrowth) {
+  if (!track || track.round !== offer.round) {
+    return { round: offer.round, best: offer.funds, mark: offer.funds, markAt: now };
+  }
+  const best = Math.max(track.best, offer.funds);
+  if (offer.funds > track.mark * (1 + minGrowth)) {
+    return { round: offer.round, best, mark: offer.funds, markAt: now };
+  }
+  return { ...track, best };
+}
+
+/**
+ * Accept once the offers have stopped growing: no `minGrowth` jump for `plateauMs`, and the
+ * current offer within `dip` of the best seen. Offers swing with the corp's cycle, so this
+ * avoids signing at a low.
+ *
+ * @param {OfferTrack} track
+ * @param {{funds: number}} offer
+ * @param {number} now ms
+ * @param {{plateauMs: number, dip: number}} rule
+ * @returns {boolean}
+ */
+export function shouldAcceptOffer(track, offer, now, { plateauMs, dip }) {
+  return offer.funds > 0 && now - track.markAt >= plateauMs && offer.funds >= track.best * (1 - dip);
+}
+
