@@ -7,3 +7,5 @@ NetscriptDefinitions.d.ts
 
 *.log
 .idea/
+# Planning docs (superpowers plans/specs) stay local; never commit them.
+docs/superpowers/
