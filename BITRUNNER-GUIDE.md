@@ -95,7 +95,7 @@ src/
 ├── advanced/                                  ← Source-File-gated managers
 │   ├── stock-trader.js, faction-manager.js
 │   ├── augmentation-buyer.js, gang-manager.js
-│   ├── sleeve-manager.js, corp-manager.js
+│   ├── sleeve-manager.js
 │   └── bladeburner-manager.js
 └── tools/                                     ← Standalone utilities
     ├── monitor.js, analyze.js, deploy.js
@@ -107,7 +107,10 @@ src/
     ├── manager-toggle.js                        ← enable/disable daemon managers
     ├── ram-report.js                             ← per-manager / per-function RAM audit
     ├── program-buyer.js, home-upgrader.js        ← one-shot buyers (SF-4)
-    ├── market-access.js, corp-boost.js           ← one-shot buyers (WSE ladder, corp boosters)
+    ├── market-access.js                          ← one-shot buyer (WSE ladder)
+    ├── corp-setup.js, corp-warehouse.js          ← corporation one-shots (BN3)
+    ├── corp-office.js, corp-boost.js
+    ├── corp-research.js, corp-invest.js
     ├── stasis.js, stasis-worker.js             ← darknet stasis links
     ├── darknet-scan.js, darknet-probe-worker.js ← darknet mapping & cracking intel
     ├── darknet-crack-worker.js                   ← heartbleed log capture (peek-only)
@@ -305,13 +308,31 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 - **Idempotent assignment**: it now reads `getTask()` and skips a sleeve that's already doing what was chosen. Re-issuing a `setTo*` call restarts the task, and crimes and faction work accumulate cycles toward a payout — so the old unconditional re-assignment every 30 s could hold a sleeve permanently at zero progress.
 - **Sleeve count is re-read every cycle.** It used to be read once before the loop, so a sleeve bought mid-run was never assigned work until the daemon restarted the manager.
 
-#### `advanced/corp-manager.js` — Corporation Management
-- **Requires**: Source-File 3 (or BitNode 3)
-- **Cycle**: Every 10 seconds
-- **What it does**: Manages divisions (starts with Agriculture), hires and assigns employees evenly across roles, upgrades warehouses, develops and sells products, buys corporate upgrades.
-- **Fixed: it was selling its own production multipliers.** The material loop sold `Hardware`, `Robots`, `AI Cores` and `Real Estate` on the same "stored and producing" rule it used for Food and Plants. Those four are **boost materials** — they multiply a division's production *while held*, and are never output. Selling them liquidated the multiplier. The sell list now comes from `selectMaterialsToSell()` in `lib/corp.js`, which excludes them by construction.
-- **Companion**: `tools/corp-boost.js` (one-shot) stocks those boosters and enables MarketTA2 pricing — kept out of this manager because corp API calls are expensive (see below).
-- **RAM, unresolved**: every `ns.corporation.*` function is documented at **20 GB**, and this manager references 20 of them — nominally ~400 GB, which would mean it has never launched on a normal home. Run `run src/tools/ram-report.js api` to see what the game actually charges before trusting either figure.
+#### Corporation (BitNode 3) — `tools/corp-*.js`
+- **Requires**: BitNode 3, or Source-File 3 elsewhere. Seed money only exists in BN3; elsewhere create the corporation yourself (self-funded, $150b).
+- **How it runs**: six one-shots that the daemon launches like the other buyers, about three runs every five minutes. Nothing stays resident: every setting they make (jobs, Smart Supply, sell orders, Market-TA.II) persists in the game, and boost materials aren't used up, so nothing needs doing every corp cycle. Each takes `dry` to print its plan and change nothing.
+
+| Script | Does | Needs | RAM |
+|---|---|---|---|
+| `corp-setup.js` | Creates the corp with seed money, starts the Agriculture division, then buys Smart Supply, offices in the other five cities, and the Warehouse API and Office API unlocks, strictly in that order. Waits at the first step it can't afford. | — | 131.6 GB |
+| `corp-warehouse.js` | Buys missing warehouses, turns Smart Supply on, grows a warehouse a level at 80% full | Warehouse API | 121.6 GB |
+| `corp-office.js` | Grows offices toward `corpOfficeSize` (9), hires to fill them, sets each job's head count from `corpJobWeights`, buys tea and throws parties | Office API | 151.6 GB |
+| `corp-boost.js` | Stocks the boost-material mix that maximizes production, sells the output (MAX at market price), turns Market-TA.II on once researched | Warehouse API (Market-TA.II also needs the Office API) | 141.6 GB |
+| `corp-research.js` | Levels corp upgrades cheapest first within 5% of funds per run; researches `corpResearch` in order | — (research needs the Office API) | 101.6 GB |
+| `corp-invest.js` | Accepts funding rounds 1–4 once each offer stops growing, then goes public with no new shares and pays 10% dividends | — | 81.6 GB |
+
+- **Money**: nothing spends below `DEFAULTS.corpCashReserve` ($1b; salaries are paid every cycle). Growing an office or warehouse may take `corpStructureSpend` (25%) of the rest. A city's first warehouse may take all of it, since a city without one produces nothing.
+- **Boost materials** (Hardware, Robots, AI Cores, Real Estate) multiply production while held and are never sold. `optimalBoostAmounts` in `lib/corp.js` solves for the best mix over the 60% of each warehouse not kept free (`corpWarehouseHeadroom`). The derivation is in its comment. For Agriculture, Real Estate dominates: a small warehouse gets Real Estate alone. When money or space runs short, every purchase shrinks by the same fraction, so the mix stays optimal.
+- **Investment**: offers grow with valuation and swing with the corp cycle. A round is accepted once the offer hasn't grown 2% in 15 minutes and is within 5% of the best seen that round (`corpInvest*`). The record is kept in `/data/corp-invest.txt`. Lower `corpInvestRounds` to go public sooner.
+- **Dividends are the only way corp profit reaches your money.** `corpDividendRate` (10%) is a trade-off: a higher rate pays you more now but leaves less for the corp to grow with. Spend the money on augmentations, or on rep with `faction-donate.js`: BN3 allows donations from 75 favor, and a donation costs about $1m per rep point against a bribe's $1b.
+- **Errors are not swallowed.** The old `corp-manager.js` wrapped every call in `try {} catch {}`. It called a function that doesn't exist (`setAutoJobAssignment`), passed the wrong arguments to `getProduct` and `sellProduct`, and never bought the unlocks its calls needed. All of that failed silently, so it never produced anything. `test/corp-ram.test.js` now rejects any `ns.corporation` name that isn't a real function and pins each script's RAM.
+- **Not covered**: product industries (Tobacco and the like), exports between divisions, advertising, bribes.
+
+##### BN3 day one
+1. **Look before buying**: `run src/tools/corp-setup.js dry` lists the real costs. The two API unlocks are bought last because what they gate is free to do by hand.
+2. **Create the corporation**: let `corp-setup.js` do it once home has about 132 GB free, or do it at City Hall → Create Corporation → seed money. Either way it then starts the division, buys Smart Supply and opens the other five cities as money allows.
+3. **Until both API unlocks are owned**, do by hand in the corporation UI, for every city: buy a warehouse, hire 3 employees and put one each on Operations, Engineer and Business, tick Smart Supply, and set Plants and Food to sell `MAX` at `MP`. The tools take over (and reassign hand-hired staff) once the unlocks land.
+4. **Leave investment to `corp-invest.js`**, or check its view with `run src/tools/corp-invest.js dry`.
 
 #### `advanced/bladeburner-manager.js` — Bladeburner Operations
 - **Requires**: Source-File 6 or 7
@@ -434,7 +455,7 @@ run src/tools/manager-toggle.js off all            # disable every manager
 run src/tools/manager-toggle.js on faction         # re-enable one
 run src/tools/manager-toggle.js on all             # re-enable every manager
 ```
-Flips the `disabledManagers` override — the daemon kills a disabled-but-running manager and won't relaunch it until re-enabled, while `daemon.js` and every other manager keep running. Use this when a manager is doing something you don't want right now — e.g. the faction manager cancelling whatever work you started in favor of its own grind — without shutting down the whole daemon. Manager ids: `hack`, `rooter`, `server-buyer`, `hacknet`, `contracts`, `stock`, `faction`, `gang`, `sleeve`, `bladeburner`, `corp`.
+Flips the `disabledManagers` override — the daemon kills a disabled-but-running manager and won't relaunch it until re-enabled, while `daemon.js` and every other manager keep running. Use this when a manager is doing something you don't want right now — e.g. the faction manager cancelling whatever work you started in favor of its own grind — without shutting down the whole daemon. Manager ids: `hack`, `rooter`, `server-buyer`, `hacknet`, `contracts`, `stock`, `faction`, `gang`, `sleeve`, `bladeburner`, and the corp one-shots `corp-setup`, `corp-warehouse`, `corp-office`, `corp-boost`, `corp-research`, `corp-invest`.
 
 #### `tools/hwgw-tune.js` — Tune HWGW Pipeline Depth
 ```
@@ -495,9 +516,9 @@ run src/tools/ram-report.js api            # per-function RAM as the game charge
 ```
 The daemon refuses to launch a script that doesn't fit in free home RAM. If a script is bigger than home *itself* it can never launch, and the dashboard shows the same `🔒 LOCKED` used for a missing Source File — so "outgrew home" and "subsystem unavailable" look identical. This names the case: `ok` / `blocked` (fits home, botnet busy — the daemon will retry) / `impossible` (never) / `unknown` (`getScriptRam` returned 0, meaning the file failed to parse).
 
-`api` mode calls `ns.getFunctionRamCost()` (0 GB) for the expensive namespaces. It exists to settle one open question: the definitions file prices every `ns.corporation.*` call at 20 GB, which would put `corp-manager.js` near 400 GB.
+`api` mode calls `ns.getFunctionRamCost()` (0 GB) for the expensive namespaces. Use it to check the corporation figures pinned in `test/corp-ram.test.js` against what the game charges.
 
-#### One-shot buyers — `program-buyer.js`, `home-upgrader.js`, `market-access.js`, `corp-boost.js`
+#### One-shot buyers — `program-buyer.js`, `home-upgrader.js`, `market-access.js`, `corp-*.js`
 ```
 run src/tools/program-buyer.js dry         # what it would buy from the darkweb
 run src/tools/market-access.js dry         # next WSE ladder rung
@@ -508,7 +529,7 @@ All four are launched by the daemon and all four **exit instead of looping** —
 - **`program-buyer.js`** (SF-4) — buys the TOR router, then the port openers cheapest-first, then `Formulas.exe` and `DarkscapeNavigator.exe`. This is what unblocks `rooter.js`: it can only open as many ports as it has programs, and those were previously bought by hand. **The port openers have no budget** — each is bought the moment the balance covers it, because it permanently unlocks servers the whole botnet earns from and all five together are only ~$287m. A share cap here backfired: `SQLInject.exe` at $250m is 83% of a $300m wallet, so `DEFAULTS.programBudgetPercent` refused it on every burst and the 5-port servers stayed unrooted. The two non-opener extras still spend against that percentage, applied to *what the openers left* rather than the opening balance — `Formulas.exe` alone is $5b and would otherwise starve `server-buyer.js` and `augmentation-buyer.js`. Gates on `ns.hasTorRouter()` (0.05 GB, *not* SF-multiplied) rather than `getDarkwebPrograms()` (16 GB at SF-4.1) for the same answer. A program this BitNode's darkweb doesn't stock is skipped, not fatal.
 - **`home-upgrader.js`** (SF-4) — buys home RAM while `DEFAULTS.homeUpgradeBudgetPercent` lasts. Home RAM is the single gate on how many managers can run at all. It carries **no cost probe**: `getUpgradeHomeRamCost` would add 24 GB at SF-4.1 and tells us nothing `upgradeHomeRam()`'s return value doesn't, so spend is tracked by watching the wallet. Cores are deliberately not bought — Bitburner's static analyzer charges for every literal `ns.<fn>` *reference* whether or not it runs, so hiding `upgradeHomeCores` behind a config flag would cost the full 48 GB anyway.
 - **`market-access.js`** — climbs WSE → TIX API → 4S Data → 4S TIX. A ladder, not a shopping list: an unaffordable rung stops the climb, because buying the TIX API without the WSE account underneath it buys something unusable. Prices come from `getConstants()` (0 GB), so nothing is hardcoded. Total 12.3 GB, no Source-File multiplier.
-- **`corp-boost.js`** (SF-3) — stocks boost materials toward `DEFAULTS.corpBoostTargets` and turns on MarketTA2 pricing. Uses `bulkPurchase`, not `buyMaterial`: `buyMaterial` sets a per-second buy *rate* that would keep running after the script exits and overfill the warehouse, which stalls production outright. Purchases are capped by free warehouse space with `DEFAULTS.corpWarehouseHeadroom` left for output. Kept separate from `corp-manager.js` so its (documented) 20 GB-per-call cost is borrowed, not resident.
+- **`corp-*.js`** (BN3 / SF-3) — six corporation one-shots; see *Corporation (BitNode 3)* above.
 
 #### `tools/grafting.js` — Graft Augmentations Without Reputation (SF-10)
 ```
@@ -670,7 +691,7 @@ The daemon (`src/daemon.js`) is the single entry point. When you run it:
    4. Server Buyer (RAM expansion)
    5. Hacknet Manager (passive income)
    6. Contract Solver (bonus rewards)
-   7. Market Access *(one-shot)*, Stock Trader, Faction Manager, Gang, Sleeves, Bladeburner, Corporation, Corp Boost *(one-shot)*
+   7. Market Access *(one-shot)*, Stock Trader, Faction Manager, Gang, Sleeves, Bladeburner, the corporation one-shots *(setup, warehouses, offices, boost, research, investment)*
 3. **Monitors** every 5 seconds: restarts crashed managers, displays status dashboard
 4. **Self-heals**: If a manager dies, daemon relaunches it on the next cycle
 

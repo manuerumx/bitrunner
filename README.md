@@ -65,10 +65,11 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 | `run src/tools/rename-servers.js` | none | — | One-shot: renames old `bitrunner-#` purchased servers to scientist names (see below). Kills a busy server's scripts if needed; the coordinator redeploys them next cycle. |
 | `run src/managers/prep-server.js <target>` | hostname | — | Manually weaken/grow one target to min-security/max-money. Exits when prepped. |
 | `run src/tools/ram-report.js` | none | — | What every manager costs in RAM, and which ones are **too big to ever launch** on this home. See the note below. |
-| `run src/tools/ram-report.js api` | `api` | — | Per-function RAM as the game actually charges it (`getFunctionRamCost`, 0 GB). Settles whether corporation calls really cost 20 GB each. |
+| `run src/tools/ram-report.js api` | `api` | — | Per-function RAM as the game actually charges it (`getFunctionRamCost`, 0 GB). Checks the corporation figures pinned in `test/corp-ram.test.js`. |
 | `run src/tools/program-buyer.js dry` | `dry` | SF-4 + TOR | Reports which darkweb programs it would buy and for how much. Buys nothing. |
 | `run src/tools/market-access.js dry` | `dry` | — | Reports the next World Stock Exchange unlock it would buy (WSE → TIX → 4S → 4S TIX). Buys nothing. |
-| `run src/tools/corp-boost.js dry` | `dry` | SF-3 | Reports the boost materials it would stock per division/city. Buys nothing. |
+| `run src/tools/corp-setup.js dry` | `dry` | BN3 / SF-3 | The corporation setup plan with live costs: division, Smart Supply, cities, API unlocks. Buys nothing. Run it on BN3 day one. |
+| `run src/tools/corp-<tool>.js dry` | `dry` | BN3 / SF-3 | Any corp tool (`warehouse`, `office`, `boost`, `research`, `invest`) reports what it would do and changes nothing. |
 | `run src/tools/darknet-scan.js crack` | `crack` | Darknet | Heartbleeds every reachable uncracked darknet server and stores the captured logs. **Read-only** — see below. |
 | `run src/tools/grafting.js` | none | SF-10 | Lists augmentations you can graft right now. Grafting needs **money only — no faction reputation.** |
 | `run src/tools/grafting.js graft [name]` | optional name | SF-10 | Travels to New Tokyo and grafts the cheapest affordable augmentation (or the named one). Manual on purpose — see below. |
@@ -149,8 +150,8 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 ## Scripts you do **not** run by hand
 
 - **Workers** — `hack.js`, `grow.js`, `weaken.js` — dispatched by the hack-coordinator with precise timing/thread args. Running them manually does nothing useful.
-- **Managers** — `hack-coordinator.js`, `rooter.js`, `server-buyer.js`, `hacknet-manager.js`, `contract-solver.js`, and the advanced managers (`stock-trader.js`, `faction-manager.js`, `gang-manager.js`, `sleeve-manager.js`, `bladeburner-manager.js`, `corp-manager.js`) — all auto-launched by `daemon.js`.
-- **One-shot buyers** — `program-buyer.js`, `home-upgrader.js`, `market-access.js`, `corp-boost.js` — also auto-launched by `daemon.js`, but they *run, spend, and exit* instead of looping. The daemon re-runs each one roughly every 5 minutes. They show as `⏱ IDLE` on the dashboard between bursts; that's the normal resting state, not a fault. Each has a `dry` mode (above) if you want to see the plan first.
+- **Managers** — `hack-coordinator.js`, `rooter.js`, `server-buyer.js`, `hacknet-manager.js`, `contract-solver.js`, and the advanced managers (`stock-trader.js`, `faction-manager.js`, `gang-manager.js`, `sleeve-manager.js`, `bladeburner-manager.js`) — all auto-launched by `daemon.js`.
+- **One-shot buyers** — `program-buyer.js`, `home-upgrader.js`, `market-access.js`, and the six `corp-*.js` tools — also auto-launched by `daemon.js`, but they *run, spend, and exit* instead of looping. The daemon re-runs each one roughly every 5 minutes. They show as `⏱ IDLE` on the dashboard between bursts; that's the normal resting state, not a fault. Each has a `dry` mode (above) if you want to see the plan first.
 - **Darknet workers** — `darknet-probe-worker.js`, `darknet-crack-worker.js`, `stasis-worker.js` — shipped to darknet servers by `darknet-scan.js` / `stasis.js` and exec'd there.
 
 You *can* launch a single manager by hand for testing (e.g. `run src/advanced/stock-trader.js`); the daemon detects it's already running and won't double-launch it. Advanced managers exit with an "API required" message if their Source File isn't unlocked.
@@ -174,12 +175,11 @@ You *can* launch a single manager by hand for testing (e.g. `run src/advanced/st
 | `ipvgo.js cheat` | **SF-14.2** (plain `ipvgo.js` needs nothing) |
 | `program-buyer.js` (auto), `home-upgrader.js` (auto) | **SF-4** — and note the ×16/×4/×1 RAM multiplier by SF-4 level |
 | `market-access.js` (auto) | No Source File — buys WSE/TIX/4S itself |
-| `corp-boost.js` (auto) | SF-3 / BitNode 3 |
+| `corp-*.js` (auto) | BitNode 3, or SF-3 elsewhere (outside BN3, create the corporation yourself) |
 | `darknet-scan.js crack` | Darknet access (`DarkscapeNavigator.exe`) + charisma |
 | `stock-trader.js` (auto) | WSE + TIX API (shorts need SF-8); trades on momentum without 4S |
 | `faction-manager.js` (auto) | SF-4 |
 | `gang-manager.js` (auto) | SF-2 / BitNode 2 |
-| `corp-manager.js` (auto) | SF-3 / BitNode 3 |
 | `bladeburner-manager.js` (auto) | SF-6 or SF-7 |
 | `sleeve-manager.js` (auto) | SF-10 |
 | Everything else | No Source File required |

@@ -12,9 +12,8 @@ import { formatRAM } from "/src/lib/utils.js";
 // Source File". A manager that outgrew home is therefore indistinguishable from one whose
 // subsystem is unavailable, and stays that way silently for the whole run.
 //
-// It also settles the open question in docs/API-COVERAGE-AUDIT.md §1: every
-// ns.corporation.* function is documented at 20 GB, which would put corp-manager.js near
-// 400 GB. `api` mode asks the game directly instead of trusting the docs.
+// It also checks the corporation figures pinned in test/corp-ram.test.js: `api` mode asks the
+// game directly instead of trusting the definitions file.
 //
 // Free: getFunctionRamCost and getScriptRam are 0 GB and 0.1 GB respectively.
 

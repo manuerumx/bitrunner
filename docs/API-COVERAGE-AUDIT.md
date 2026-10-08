@@ -398,6 +398,10 @@ before the stock trader in priority order. No new port.
 
 ### 5.5 — P1 · Corporation production levers
 
+> **Superseded 2026-10-08.** `corp-manager.js` was retired and replaced by six one-shots
+> (`src/tools/corp-*.js`); see *Corporation (BitNode 3)* in `BITRUNNER-GUIDE.md`. RAM is now
+> pinned per script in `test/corp-ram.test.js` (10–20 GB per corporation call, not a flat 20).
+
 **Measure RAM first** — see §1. If corp functions really bill 20 GB each, `corp-manager.js` is
 already ~400 GB and this whole section is blocked on a redesign (split into per-concern one-shots,
 each referencing 2-3 corp functions) rather than an extension.

@@ -151,7 +151,7 @@ A four‑layer, home‑supervised system. Everything is launched and watched by 
 | Lib | [`lib/target-selector.js`](../src/lib/target-selector.js) | Ranks targets by `maxMoney·chance / weakenTime^0.3`. |
 | Lib | [`lib/constants.js`](../src/lib/constants.js) | `WORKER_SCRIPTS`, `WORKER_RAM`, `PROGRAMS`, `PORTS`, `DEFAULTS`. |
 | Lib | [`lib/port-registry.js`](../src/lib/port-registry.js) · [`lib/config.js`](../src/lib/config.js) | Port read/write helpers + `getConfig` (runtime overrides). `getConfig` is **never called by the hot path** (F‑18). |
-| Advanced | [`advanced/stock-trader.js`](../src/advanced/stock-trader.js), [`faction-manager.js`](../src/advanced/faction-manager.js), [`augmentation-buyer.js`](../src/advanced/augmentation-buyer.js), [`gang-manager.js`](../src/advanced/gang-manager.js), [`sleeve-manager.js`](../src/advanced/sleeve-manager.js), [`bladeburner-manager.js`](../src/advanced/bladeburner-manager.js), [`corp-manager.js`](../src/advanced/corp-manager.js) | Progression/economy automation. All run on home and use only their feature APIs — **none distribute workers.** |
+| Advanced | [`advanced/stock-trader.js`](../src/advanced/stock-trader.js), [`faction-manager.js`](../src/advanced/faction-manager.js), [`augmentation-buyer.js`](../src/advanced/augmentation-buyer.js), [`gang-manager.js`](../src/advanced/gang-manager.js), [`sleeve-manager.js`](../src/advanced/sleeve-manager.js), [`bladeburner-manager.js`](../src/advanced/bladeburner-manager.js) | Progression/economy automation. All run on home and use only their feature APIs — **none distribute workers.** |
 | Tools | [`tools/`](../src/tools) | One‑shot operator commands: deploy, backdoor, monitor, connect, analyze, nuke-all, reset-prep, sell-stocks, find-contracts. |
 
 ---
