@@ -253,36 +253,47 @@ test("nextResearch has nothing left once everything is owned", () => {
 
 // ── trackOffer / shouldAcceptOffer ──────────────────────────────────────────
 
+const TRACK_RULE = { minGrowth: 0.02, maxGapMs: 10, dip: 0.05 };
+
 test("trackOffer starts a record on the first offer of a round", () => {
-  assert.deepEqual(trackOffer(null, { round: 1, funds: 100 }, 5, 0.02, 10), {
+  assert.deepEqual(trackOffer(null, { round: 1, funds: 100 }, 5, TRACK_RULE), {
     round: 1, best: 100, mark: 100, markAt: 5, seenAt: 5,
   });
   const old = { round: 1, best: 500, mark: 500, markAt: 0, seenAt: 4 };
-  assert.deepEqual(trackOffer(old, { round: 2, funds: 100 }, 5, 0.02, 10), {
+  assert.deepEqual(trackOffer(old, { round: 2, funds: 100 }, 5, TRACK_RULE), {
     round: 2, best: 100, mark: 100, markAt: 5, seenAt: 5,
   });
 });
 
 test("trackOffer moves the mark only on growth of at least minGrowth", () => {
   const track = { round: 1, best: 100, mark: 100, markAt: 0, seenAt: 0 };
-  assert.deepEqual(trackOffer(track, { round: 1, funds: 101 }, 5, 0.02, 10), {
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 101 }, 5, TRACK_RULE), {
     round: 1, best: 101, mark: 100, markAt: 0, seenAt: 5,
   });
-  assert.deepEqual(trackOffer(track, { round: 1, funds: 110 }, 5, 0.02, 10), {
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 110 }, 5, TRACK_RULE), {
     round: 1, best: 110, mark: 110, markAt: 5, seenAt: 5,
   });
 });
 
-test("trackOffer keeps the best offer when the offer drops", () => {
+test("trackOffer keeps the best offer when the offer dips within dip", () => {
   const track = { round: 1, best: 100, mark: 100, markAt: 0, seenAt: 0 };
-  assert.deepEqual(trackOffer(track, { round: 1, funds: 90 }, 5, 0.02, 10), { ...track, seenAt: 5 });
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 95 }, 5, TRACK_RULE), { ...track, seenAt: 5 });
+});
+
+// Spending the corp's cash lowers its valuation for good: an offer that falls past the dip
+// won't come back to the old best, so waiting for it would stall the round.
+test("trackOffer restarts the record when the offer falls more than dip below the best", () => {
+  const track = { round: 1, best: 100, mark: 100, markAt: 0, seenAt: 0 };
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 94 }, 5, TRACK_RULE), {
+    round: 1, best: 94, mark: 94, markAt: 5, seenAt: 5,
+  });
 });
 
 // The corporation stands still while the game is closed. Time nobody watched the offer is not
 // time it spent not growing, so a gap restarts the record.
 test("trackOffer restarts the record after a gap in watching", () => {
   const track = { round: 1, best: 100, mark: 100, markAt: 0, seenAt: 0 };
-  assert.deepEqual(trackOffer(track, { round: 1, funds: 100 }, 20, 0.02, 10), {
+  assert.deepEqual(trackOffer(track, { round: 1, funds: 100 }, 20, TRACK_RULE), {
     round: 1, best: 100, mark: 100, markAt: 20, seenAt: 20,
   });
 });

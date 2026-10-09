@@ -275,17 +275,24 @@ export function nextResearch(priority, owned, costOf, points, spend) {
  *
  * A new round starts a new record, and so does a gap of more than `maxGapMs` since the last
  * look: the corporation stands still while the game is closed, so unwatched time is not time
- * the offer spent not growing.
+ * the offer spent not growing. So does an offer more than `dip` below the best: valuation
+ * counts the corp's cash, so spending it lowers the offer for good, and the old best won't
+ * come back.
  *
  * @param {OfferTrack | null} track
  * @param {{round: number, funds: number}} offer
  * @param {number} now ms
- * @param {number} minGrowth 0.02 = 2%
- * @param {number} maxGapMs
+ * @param {{minGrowth: number, maxGapMs: number, dip: number}} rule minGrowth and dip as
+ *   fractions (0.02 = 2%)
  * @returns {OfferTrack}
  */
-export function trackOffer(track, offer, now, minGrowth, maxGapMs) {
-  if (!track || track.round !== offer.round || now - track.seenAt > maxGapMs) {
+export function trackOffer(track, offer, now, { minGrowth, maxGapMs, dip }) {
+  if (
+    !track ||
+    track.round !== offer.round ||
+    now - track.seenAt > maxGapMs ||
+    offer.funds < track.best * (1 - dip)
+  ) {
     return { round: offer.round, best: offer.funds, mark: offer.funds, markAt: now, seenAt: now };
   }
   const best = Math.max(track.best, offer.funds);

@@ -178,7 +178,8 @@ export const DEFAULTS = {
   corpResearchSpend: 0.5,
   // Funding rounds corp-invest.js takes before going public. Each is accepted once the offer
   // has grown less than corpInvestMinGrowth for corpInvestPlateauMs and is within
-  // corpInvestDip of the best offer seen in that round.
+  // corpInvestDip of the best offer seen in that round. An offer that falls further than
+  // corpInvestDip below the best restarts the round's record from where it is.
   corpInvestRounds: 4,
   corpInvestPlateauMs: 15 * 60 * 1000,
   corpInvestMinGrowth: 0.02,

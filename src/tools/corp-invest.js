@@ -78,7 +78,11 @@ export async function main(ns) {
   }
 
   const now = Date.now();
-  const track = trackOffer(readTrack(ns), offer, now, DEFAULTS.corpInvestMinGrowth, DEFAULTS.corpInvestMaxGapMs);
+  const track = trackOffer(readTrack(ns), offer, now, {
+    minGrowth: DEFAULTS.corpInvestMinGrowth,
+    maxGapMs: DEFAULTS.corpInvestMaxGapMs,
+    dip: DEFAULTS.corpInvestDip,
+  });
   const rule = { plateauMs: DEFAULTS.corpInvestPlateauMs, dip: DEFAULTS.corpInvestDip };
   if (shouldAcceptOffer(track, offer, now, rule)) {
     tlog(ns, `corp-invest: ${dryRun ? "would accept" : "accepting"} round ${offer.round}: ${formatMoney(offer.funds)} for ${offer.shares} shares`);

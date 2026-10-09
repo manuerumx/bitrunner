@@ -26,13 +26,18 @@ test("it accepts an offer that has stopped growing", async () => {
   assert.equal(state.files[TRACK_FILE], "");
 });
 
-test("it doesn't accept an offer that has dipped below the best", async () => {
+// The offer falls for good as the corp spends its cash, so a fall past the dip starts the wait
+// over from the new level instead of waiting for the old best to come back.
+test("an offer that has fallen below the best restarts the wait from where it is", async () => {
   const { ns, state } = makeCorpNs({
     offer: { round: 1, funds: 90e9, shares: 1e8 },
     files: { [TRACK_FILE]: stale(100e9) },
   });
   await main(ns);
   assert.deepEqual(callsTo(state, "acceptInvestmentOffer"), []);
+  const track = JSON.parse(state.files[TRACK_FILE]);
+  assert.equal(track.best, 90e9);
+  assert.ok(Date.now() - track.markAt < 60e3);
 });
 
 test("it treats an unreadable record as no record", async () => {
