@@ -1,3 +1,4 @@
+import { SPENDING_HOLD_FILE, parseSpendingHold } from "/src/lib/corp.js";
 import { DEFAULTS } from "/src/lib/constants.js";
 import { formatMoney, log, tlog } from "/src/lib/utils.js";
 
@@ -8,7 +9,8 @@ import { formatMoney, log, tlog } from "/src/lib/utils.js";
 //   run /src/tools/corp-warehouse.js dry    report the plan, buy nothing
 //
 // A city without a warehouse produces nothing, so buying one may use all the money above
-// DEFAULTS.corpCashReserve. Growing one may use DEFAULTS.corpStructureSpend of it.
+// DEFAULTS.corpCashReserve. Growing one may use DEFAULTS.corpStructureSpend of it. Nothing is
+// bought while corp-invest.js holds spending (SPENDING_HOLD_FILE).
 //
 // Needs the Warehouse API unlock (corp-setup.js buys it). Until then it does nothing; buy
 // warehouses and tick Smart Supply by hand in the UI.
@@ -29,7 +31,9 @@ export async function main(ns) {
   const smartSupply = ns.corporation.hasUnlock("Smart Supply");
   const corp = ns.corporation.getCorporation();
   const warehouseCost = ns.corporation.getConstants().warehouseInitialCost;
-  let budget = corp.funds - DEFAULTS.corpCashReserve;
+  const held = parseSpendingHold(ns.read(SPENDING_HOLD_FILE), Date.now(), DEFAULTS.corpHoldMaxMs) !== null;
+  if (held) say("corp-warehouse: spending is held while corp-invest.js reads a funding offer");
+  let budget = held ? 0 : corp.funds - DEFAULTS.corpCashReserve;
 
   for (const divName of corp.divisions) {
     for (const city of ns.corporation.getDivision(divName).cities) {

@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { main } from "/src/tools/corp-boost.js";
+import { SPENDING_HOLD_FILE } from "/src/lib/corp.js";
 import { BOOST_SIZES, boostFactors, optimalBoostAmounts } from "/src/lib/corp.js";
 import { AGRICULTURE, callsTo, makeCorpNs, makeDivision, makeWarehouse } from "./corp-mock.mjs";
 
@@ -77,3 +78,13 @@ test("dry changes nothing", async () => {
   assert.deepEqual(state.calls, []);
 });
 
+
+// corp-invest.js holds spending while it reads a funding offer; free work carries on.
+const HELD = { [SPENDING_HOLD_FILE]: JSON.stringify({ round: 1, since: Date.now() }) };
+
+test("it buys no boost materials while spending is held, but still sells", async () => {
+  const { ns, state } = boostCorp({ files: HELD });
+  await main(ns);
+  assert.deepEqual(callsTo(state, "bulkPurchase"), []);
+  assert.ok(callsTo(state, "sellMaterial").length > 0);
+});

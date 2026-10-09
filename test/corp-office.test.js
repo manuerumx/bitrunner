@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { main } from "/src/tools/corp-office.js";
+import { SPENDING_HOLD_FILE } from "/src/lib/corp.js";
 import { callsTo, makeCorpNs, makeDivision, makeOffice } from "./corp-mock.mjs";
 
 function corpWith(office, over = {}) {
@@ -71,3 +72,15 @@ test("dry changes nothing", async () => {
   assert.ok(state.output.some((line) => line.includes("office +3")));
 });
 
+
+// corp-invest.js holds spending while it reads a funding offer; free work carries on.
+const HELD = { [SPENDING_HOLD_FILE]: JSON.stringify({ round: 1, since: Date.now() }) };
+
+test("it doesn't grow offices or buy tea while spending is held", async () => {
+  const { ns, state } = corpWith(makeOffice({ avgEnergy: 50, avgMorale: 50 }), { funds: 1e12, files: HELD });
+  await main(ns);
+  assert.deepEqual(callsTo(state, "upgradeOfficeSize"), []);
+  assert.deepEqual(callsTo(state, "buyTea"), []);
+  assert.deepEqual(callsTo(state, "throwParty"), []);
+  assert.equal(callsTo(state, "hireEmployee").length, 3);
+});

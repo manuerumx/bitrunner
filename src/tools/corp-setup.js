@@ -1,4 +1,10 @@
-import { planSetup, SETUP_UNLOCKS_FIRST, SETUP_UNLOCKS_LAST } from "/src/lib/corp.js";
+import {
+  parseSpendingHold,
+  planSetup,
+  SETUP_UNLOCKS_FIRST,
+  SETUP_UNLOCKS_LAST,
+  SPENDING_HOLD_FILE,
+} from "/src/lib/corp.js";
 import { DEFAULTS } from "/src/lib/constants.js";
 import { formatMoney, log, tlog } from "/src/lib/utils.js";
 
@@ -13,7 +19,8 @@ import { formatMoney, log, tlog } from "/src/lib/utils.js";
 //
 // ONE-SHOT. The daemon runs it about three times every five minutes, so it is idempotent: each
 // run buys the next steps it can afford, in planSetup's order, and stops at the first it can't.
-// Game errors are not caught: a failed purchase should be seen, not skipped.
+// Game errors are not caught: a failed purchase should be seen, not skipped. Nothing is bought
+// while corp-invest.js holds spending (SPENDING_HOLD_FILE).
 
 /** @param {SetupStep} step */
 function describe(step) {
@@ -38,6 +45,11 @@ export async function main(ns) {
     }
     ns.corporation.createCorporation(DEFAULTS.corpName, false);
     tlog(ns, `corp-setup: created "${DEFAULTS.corpName}" with seed money`);
+  }
+
+  if (parseSpendingHold(ns.read(SPENDING_HOLD_FILE), Date.now(), DEFAULTS.corpHoldMaxMs)) {
+    say("corp-setup: spending is held while corp-invest.js reads a funding offer");
+    return;
   }
 
   const corp = ns.corporation.getCorporation();

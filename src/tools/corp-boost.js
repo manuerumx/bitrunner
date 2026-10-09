@@ -1,4 +1,12 @@
-import { BOOST_MATERIALS, BOOST_SIZES, boostFactors, optimalBoostAmounts, planBoostPurchases } from "/src/lib/corp.js";
+import {
+  BOOST_MATERIALS,
+  BOOST_SIZES,
+  SPENDING_HOLD_FILE,
+  boostFactors,
+  optimalBoostAmounts,
+  parseSpendingHold,
+  planBoostPurchases,
+} from "/src/lib/corp.js";
 import { DEFAULTS } from "/src/lib/constants.js";
 import { formatMoney, log, tlog } from "/src/lib/utils.js";
 
@@ -18,6 +26,9 @@ import { formatMoney, log, tlog } from "/src/lib/utils.js";
 // Sell orders persist in the game, so one is only placed where none is set; orders you set by
 // hand are left alone.
 //
+// Nothing is bought while corp-invest.js holds spending (SPENDING_HOLD_FILE); sell orders and
+// Market-TA.II are still set.
+//
 // Needs the Warehouse API unlock. Market-TA.II also needs the Office API, because checking
 // research is an Office API call.
 //
@@ -36,7 +47,9 @@ export async function main(ns) {
 
   const officeApi = ns.corporation.hasUnlock("Office API");
   const corp = ns.corporation.getCorporation();
-  let budget = corp.funds - DEFAULTS.corpCashReserve;
+  const held = parseSpendingHold(ns.read(SPENDING_HOLD_FILE), Date.now(), DEFAULTS.corpHoldMaxMs) !== null;
+  if (held) say("corp-boost: spending is held while corp-invest.js reads a funding offer");
+  let budget = held ? 0 : corp.funds - DEFAULTS.corpCashReserve;
 
   for (const divName of corp.divisions) {
     const div = ns.corporation.getDivision(divName);

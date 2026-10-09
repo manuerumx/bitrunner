@@ -1,13 +1,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { main } from "/src/tools/corp-invest.js";
-import { PORTS } from "/src/lib/constants.js";
+import { DEFAULTS, PORTS } from "/src/lib/constants.js";
+import { SPENDING_HOLD_FILE } from "/src/lib/corp.js";
 import { callsTo, makeCorpNs } from "./corp-mock.mjs";
 
 const TRACK_FILE = "/data/corp-invest.txt";
 // A record watched a minute ago whose last growth was at the epoch: the 15-minute plateau has
 // long passed.
 const stale = (best) => JSON.stringify({ round: 1, best, mark: best, markAt: 0, seenAt: Date.now() - 60e3 });
+const hold = (round, ageMs) => JSON.stringify({ round, since: Date.now() - ageMs });
+const holdOf = (state) => JSON.parse(state.files[SPENDING_HOLD_FILE]);
 
 test("the first look at an offer records it and accepts nothing", async () => {
   const { ns, state } = makeCorpNs({ offer: { round: 1, funds: 100e9, shares: 1e8 } });
@@ -16,14 +19,62 @@ test("the first look at an offer records it and accepts nothing", async () => {
   assert.equal(JSON.parse(state.files[TRACK_FILE]).best, 100e9);
 });
 
-test("it accepts an offer that has stopped growing", async () => {
+// Valuation averages the last ~100 s of asset growth, and every purchase the other corp tools
+// make cuts it. So a levelled-off offer first stops their spending, and is accepted later.
+test("an offer that has stopped growing holds the corp's spending instead of accepting", async () => {
   const { ns, state } = makeCorpNs({
     offer: { round: 1, funds: 99e9, shares: 1e8 },
     files: { [TRACK_FILE]: stale(100e9) },
   });
   await main(ns);
+  assert.deepEqual(callsTo(state, "acceptInvestmentOffer"), []);
+  assert.equal(holdOf(state).round, 1);
+  assert.ok(Date.now() - holdOf(state).since < 60e3);
+});
+
+// The offer rises while spending is held; that rise is the point, not more growth to wait out.
+test("it accepts once spending has been held long enough, even though the offer rose", async () => {
+  const { ns, state } = makeCorpNs({
+    offer: { round: 1, funds: 130e9, shares: 1e8 },
+    files: { [TRACK_FILE]: stale(100e9), [SPENDING_HOLD_FILE]: hold(1, DEFAULTS.corpHoldSettleMs + 1000) },
+  });
+  await main(ns);
   assert.equal(callsTo(state, "acceptInvestmentOffer").length, 1);
   assert.equal(state.files[TRACK_FILE], "");
+  assert.equal(state.files[SPENDING_HOLD_FILE], "");
+});
+
+test("it doesn't accept before the hold has settled", async () => {
+  const record = hold(1, 60e3);
+  const { ns, state } = makeCorpNs({
+    offer: { round: 1, funds: 130e9, shares: 1e8 },
+    files: { [TRACK_FILE]: stale(100e9), [SPENDING_HOLD_FILE]: record },
+  });
+  await main(ns);
+  assert.deepEqual(callsTo(state, "acceptInvestmentOffer"), []);
+  assert.equal(state.files[SPENDING_HOLD_FILE], record);
+});
+
+// A round accepted by hand leaves the hold behind; it must neither accept the next round
+// unwatched nor keep the corp from spending.
+test("a hold from another round is lifted, not acted on", async () => {
+  const { ns, state } = makeCorpNs({
+    offer: { round: 2, funds: 300e9, shares: 1e8 },
+    files: { [SPENDING_HOLD_FILE]: hold(1, DEFAULTS.corpHoldSettleMs + 1000) },
+  });
+  await main(ns);
+  assert.deepEqual(callsTo(state, "acceptInvestmentOffer"), []);
+  assert.equal(state.files[SPENDING_HOLD_FILE], "");
+});
+
+test("a lapsed hold starts over instead of accepting", async () => {
+  const { ns, state } = makeCorpNs({
+    offer: { round: 1, funds: 99e9, shares: 1e8 },
+    files: { [TRACK_FILE]: stale(100e9), [SPENDING_HOLD_FILE]: hold(1, DEFAULTS.corpHoldMaxMs + 1000) },
+  });
+  await main(ns);
+  assert.deepEqual(callsTo(state, "acceptInvestmentOffer"), []);
+  assert.ok(Date.now() - holdOf(state).since < 60e3);
 });
 
 // The offer falls for good as the corp spends its cash, so a fall past the dip starts the wait
@@ -70,7 +121,7 @@ test("bonus time doesn't hold back an offer that levelled off", async () => {
       files: { [TRACK_FILE]: stale(100e9) },
     });
     await main(ns);
-    assert.equal(callsTo(state, "acceptInvestmentOffer").length, 1, `bonus time ${bonusTime} ms`);
+    assert.equal(holdOf(state).round, 1, `bonus time ${bonusTime} ms`);
   }
 });
 
@@ -128,6 +179,7 @@ test("dry changes nothing and writes nothing", async () => {
   await main(ns);
   assert.deepEqual(state.calls, []);
   assert.equal(state.files[TRACK_FILE], record);
+  assert.equal(state.files[SPENDING_HOLD_FILE], undefined);
   assert.deepEqual(state.ports, {});
 });
 

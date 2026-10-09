@@ -6,6 +6,7 @@ import {
   nextResearch,
   optimalBoostAmounts,
   orderJobAssignments,
+  parseSpendingHold,
   planBoostPurchases,
   planJobs,
   planSetup,
@@ -316,3 +317,21 @@ test("shouldAcceptOffer never accepts an empty offer", () => {
   assert.equal(shouldAcceptOffer({ round: 1, best: 0, mark: 0, markAt: 0 }, { funds: 0 }, 5000, RULE), false);
 });
 
+
+// ── parseSpendingHold ───────────────────────────────────────────────────────
+
+test("parseSpendingHold reads a fresh hold", () => {
+  assert.deepEqual(parseSpendingHold(JSON.stringify({ round: 2, since: 100 }), 150, 100), { round: 2, since: 100 });
+});
+
+// A hold corp-invest.js never lifted (it was stopped, or the game was closed) must not freeze
+// the corp's spending for good.
+test("parseSpendingHold ignores a hold older than maxMs", () => {
+  assert.equal(parseSpendingHold(JSON.stringify({ round: 2, since: 0 }), 101, 100), null);
+});
+
+test("parseSpendingHold treats a missing or malformed hold as none", () => {
+  for (const text of ["", "not json", "null", JSON.stringify({ round: 1 }), JSON.stringify({ since: 5 })]) {
+    assert.equal(parseSpendingHold(text, 10, 100), null, text);
+  }
+});

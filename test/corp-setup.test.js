@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { main } from "/src/tools/corp-setup.js";
+import { SPENDING_HOLD_FILE } from "/src/lib/corp.js";
 import { callsTo, makeCorpNs, makeDivision } from "./corp-mock.mjs";
 
 const EVERY_UNLOCK = ["Smart Supply", "Warehouse API", "Office API"];
@@ -55,3 +56,12 @@ test("dry reports the plan and buys nothing", async () => {
   assert.ok(state.output.some((line) => line.includes("would buy the Smart Supply unlock")));
 });
 
+
+// corp-invest.js holds spending while it reads a funding offer; free work carries on.
+const HELD = { [SPENDING_HOLD_FILE]: JSON.stringify({ round: 1, since: Date.now() }) };
+
+test("it buys nothing while spending is held", async () => {
+  const { ns, state } = makeCorpNs({ funds: 1e12, files: HELD });
+  await main(ns);
+  assert.deepEqual(state.calls, []);
+});

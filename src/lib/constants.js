@@ -187,6 +187,11 @@ export const DEFAULTS = {
   // A gap longer than this between looks at the offer (the game was closed, or corp-invest.js
   // couldn't run) restarts the round's record instead of counting as a plateau.
   corpInvestMaxGapMs: 10 * 60 * 1000,
+  // Once an offer levels off, corp-invest.js holds the corp's spending this long before
+  // accepting, so the offer reflects its profit (valuation averages ~100 s of asset growth).
+  // A hold older than corpHoldMaxMs is ignored, so a stopped corp-invest.js can't freeze it.
+  corpHoldSettleMs: 3 * 60 * 1000,
+  corpHoldMaxMs: 15 * 60 * 1000,
   // Share of profit paid to shareholders (you) once public. Capped at the game's dividendMaxRate.
   corpDividendRate: 0.1,
   batchSpacingMs: 200,

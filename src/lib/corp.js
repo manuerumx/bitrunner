@@ -317,3 +317,32 @@ export function shouldAcceptOffer(track, offer, now, { plateauMs, dip }) {
   return offer.funds > 0 && now - track.markAt >= plateauMs && offer.funds >= track.best * (1 - dip);
 }
 
+
+// ── Spending hold ───────────────────────────────────────────────────────────
+
+// Valuation averages the last 10 market cycles (~100 s) of growth in the corp's total assets,
+// and every purchase cuts that growth. So corp-invest.js writes this file before accepting a
+// funding round, and the tools that spend money skip their purchases while it is fresh.
+export const SPENDING_HOLD_FILE = "/data/corp-hold.txt";
+
+/** @typedef {{round: number, since: number}} SpendingHold */
+
+/**
+ * The spending hold in `text`, or null when there is none. A hold older than `maxMs` is none:
+ * corp-invest.js was stopped, or the game was closed, and the corp must not stay frozen.
+ *
+ * @param {string} text the hold file's contents
+ * @param {number} now ms
+ * @param {number} maxMs
+ * @returns {SpendingHold | null}
+ */
+export function parseSpendingHold(text, now, maxMs) {
+  let hold;
+  try {
+    hold = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (!hold || !Number.isFinite(hold.round) || !Number.isFinite(hold.since)) return null;
+  return now - hold.since > maxMs ? null : { round: hold.round, since: hold.since };
+}

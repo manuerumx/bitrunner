@@ -1,4 +1,10 @@
-import { orderJobAssignments, planJobs, wellbeingActions } from "/src/lib/corp.js";
+import {
+  SPENDING_HOLD_FILE,
+  orderJobAssignments,
+  parseSpendingHold,
+  planJobs,
+  wellbeingActions,
+} from "/src/lib/corp.js";
 import { DEFAULTS } from "/src/lib/constants.js";
 import { formatMoney, log, tlog } from "/src/lib/utils.js";
 
@@ -10,7 +16,8 @@ import { formatMoney, log, tlog } from "/src/lib/utils.js";
 //   run /src/tools/corp-office.js dry    report the plan, change nothing
 //
 // Growing an office may use DEFAULTS.corpStructureSpend of the money above
-// DEFAULTS.corpCashReserve. Hiring and assigning are free.
+// DEFAULTS.corpCashReserve. Hiring and assigning are free. Nothing is bought while
+// corp-invest.js holds spending (SPENDING_HOLD_FILE).
 //
 // Needs the Office API unlock (corp-setup.js buys it). Until then it does nothing; hire and
 // assign by hand in the UI. Employees hired there are reassigned to the plan once it runs.
@@ -91,7 +98,9 @@ export async function main(ns) {
 
   const corp = ns.corporation.getCorporation();
   const teaCost = ns.corporation.getConstants().teaCostPerEmployee;
-  let budget = corp.funds - DEFAULTS.corpCashReserve;
+  const held = parseSpendingHold(ns.read(SPENDING_HOLD_FILE), Date.now(), DEFAULTS.corpHoldMaxMs) !== null;
+  if (held) say("corp-office: spending is held while corp-invest.js reads a funding offer");
+  let budget = held ? 0 : corp.funds - DEFAULTS.corpCashReserve;
 
   for (const divName of corp.divisions) {
     for (const city of ns.corporation.getDivision(divName).cities) {

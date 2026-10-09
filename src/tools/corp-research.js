@@ -1,4 +1,4 @@
-import { nextResearch, planUpgrades } from "/src/lib/corp.js";
+import { SPENDING_HOLD_FILE, nextResearch, parseSpendingHold, planUpgrades } from "/src/lib/corp.js";
 import { DEFAULTS } from "/src/lib/constants.js";
 import { formatMoney, log, tlog } from "/src/lib/utils.js";
 
@@ -9,7 +9,8 @@ import { formatMoney, log, tlog } from "/src/lib/utils.js";
 //
 // Upgrades: DEFAULTS.corpUpgrades, one level each per run, cheapest first, within
 // DEFAULTS.corpUpgradeSpend of the money above DEFAULTS.corpCashReserve. The daemon's
-// three runs every five minutes pace the spending.
+// three runs every five minutes pace the spending. None are bought while corp-invest.js
+// holds spending (SPENDING_HOLD_FILE); research costs no money, so it carries on.
 //
 // Research: DEFAULTS.corpResearch in order, per division, each once it costs at most
 // DEFAULTS.corpResearchSpend of that division's research points. Research needs the
@@ -30,7 +31,9 @@ export async function main(ns) {
   for (const name of DEFAULTS.corpUpgrades) {
     costs[name] = ns.corporation.getUpgradeLevelCost(/** @type {CorpUpgradeName} */ (name));
   }
-  const budget = (corp.funds - DEFAULTS.corpCashReserve) * DEFAULTS.corpUpgradeSpend;
+  const held = parseSpendingHold(ns.read(SPENDING_HOLD_FILE), Date.now(), DEFAULTS.corpHoldMaxMs) !== null;
+  if (held) say("corp-research: spending is held while corp-invest.js reads a funding offer");
+  const budget = held ? 0 : (corp.funds - DEFAULTS.corpCashReserve) * DEFAULTS.corpUpgradeSpend;
   for (const name of planUpgrades(costs, budget)) {
     say(`corp-research: upgrade ${name} for ${formatMoney(costs[name])}`);
     if (!dryRun) ns.corporation.levelUpgrade(/** @type {CorpUpgradeName} */ (name));

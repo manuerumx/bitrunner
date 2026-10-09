@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { main } from "/src/tools/corp-warehouse.js";
+import { SPENDING_HOLD_FILE } from "/src/lib/corp.js";
 import { DEFAULTS } from "/src/lib/constants.js";
 import { callsTo, makeCorpNs, makeDivision, makeOffice, makeWarehouse } from "./corp-mock.mjs";
 
@@ -61,4 +62,15 @@ test("dry changes nothing", async () => {
 // If growth waited for more than that, warehouses would only grow when output piles up unsold.
 test("warehouses grow before the boost share alone fills them", () => {
   assert.ok(DEFAULTS.corpWarehouseUpgradeAt < 1 - DEFAULTS.corpWarehouseHeadroom);
+});
+
+// corp-invest.js holds spending while it reads a funding offer; free work carries on.
+const HELD = { [SPENDING_HOLD_FILE]: JSON.stringify({ round: 1, since: Date.now() }) };
+
+test("it buys and grows no warehouse while spending is held", async () => {
+  const { ns, state } = twoCities({ "Sector-12": makeWarehouse({ sizeUsed: 85 }) }, { files: HELD });
+  await main(ns);
+  assert.deepEqual(callsTo(state, "purchaseWarehouse"), []);
+  assert.deepEqual(callsTo(state, "upgradeWarehouse"), []);
+  assert.deepEqual(callsTo(state, "setSmartSupply"), [["Agri", "Sector-12", true]]);
 });
