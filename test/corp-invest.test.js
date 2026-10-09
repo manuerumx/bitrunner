@@ -54,26 +54,32 @@ test("time the game was closed doesn't count as the offer levelling off", async 
   assert.ok(Date.now() - JSON.parse(state.files[TRACK_FILE]).markAt < 60e3);
 });
 
-test("it doesn't accept while bonus time is running", async () => {
-  const { ns, state } = makeCorpNs({
-    bonusTime: 5000,
-    offer: { round: 1, funds: 99e9, shares: 1e8 },
-    files: { [TRACK_FILE]: stale(100e9) },
-  });
-  await main(ns);
-  assert.deepEqual(callsTo(state, "acceptInvestmentOffer"), []);
+// getBonusTime() is storedCycles × 200 ms, and a state runs every 10 cycles, so it reads
+// 0–1800 ms during normal play. Real bonus time runs the corp faster, so a plateau timed by
+// the clock covers more corp cycles, not fewer: it can't fake one.
+test("bonus time doesn't hold back an offer that levelled off", async () => {
+  for (const bonusTime of [1800, 3_600_000]) {
+    const { ns, state } = makeCorpNs({
+      bonusTime,
+      offer: { round: 1, funds: 99e9, shares: 1e8 },
+      files: { [TRACK_FILE]: stale(100e9) },
+    });
+    await main(ns);
+    assert.equal(callsTo(state, "acceptInvestmentOffer").length, 1, `bonus time ${bonusTime} ms`);
+  }
 });
 
 // A corporation making no profit sits at the valuation floor, so its offer is flat and cheap.
 test("it neither tracks nor accepts while the corp makes no profit", async () => {
+  const record = stale(100e9);
   const { ns, state } = makeCorpNs({
     revenue: 0,
     offer: { round: 1, funds: 99e9, shares: 1e8 },
-    files: { [TRACK_FILE]: stale(100e9) },
+    files: { [TRACK_FILE]: record },
   });
   await main(ns);
   assert.deepEqual(callsTo(state, "acceptInvestmentOffer"), []);
-  assert.equal(state.files[TRACK_FILE], stale(100e9));
+  assert.equal(state.files[TRACK_FILE], record);
 });
 
 test("it treats a record with missing fields as no record", async () => {
@@ -108,14 +114,15 @@ test("it publishes the corp's status", async () => {
 });
 
 test("dry changes nothing and writes nothing", async () => {
+  const record = stale(100e9);
   const { ns, state } = makeCorpNs({
     args: ["dry"],
     offer: { round: 1, funds: 99e9, shares: 1e8 },
-    files: { [TRACK_FILE]: stale(100e9) },
+    files: { [TRACK_FILE]: record },
   });
   await main(ns);
   assert.deepEqual(state.calls, []);
-  assert.equal(state.files[TRACK_FILE], stale(100e9));
+  assert.equal(state.files[TRACK_FILE], record);
   assert.deepEqual(state.ports, {});
 });
 

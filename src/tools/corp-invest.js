@@ -80,9 +80,7 @@ export async function main(ns) {
   const now = Date.now();
   const track = trackOffer(readTrack(ns), offer, now, DEFAULTS.corpInvestMinGrowth, DEFAULTS.corpInvestMaxGapMs);
   const rule = { plateauMs: DEFAULTS.corpInvestPlateauMs, dip: DEFAULTS.corpInvestDip };
-  // Bonus time (offline catch-up) runs the corp faster than the clock this rule is timed by.
-  const bonusTime = ns.corporation.getBonusTime() > 0;
-  if (!bonusTime && shouldAcceptOffer(track, offer, now, rule)) {
+  if (shouldAcceptOffer(track, offer, now, rule)) {
     tlog(ns, `corp-invest: ${dryRun ? "would accept" : "accepting"} round ${offer.round}: ${formatMoney(offer.funds)} for ${offer.shares} shares`);
     if (dryRun) return;
     ns.corporation.acceptInvestmentOffer();
@@ -90,8 +88,7 @@ export async function main(ns) {
     return;
   }
 
-  const why = bonusTime ? "bonus time is running" : "waiting for it to level off";
-  say(`corp-invest: round ${offer.round} offer ${formatMoney(offer.funds)}, best ${formatMoney(track.best)}; ${why}`);
+  say(`corp-invest: round ${offer.round} offer ${formatMoney(offer.funds)}, best ${formatMoney(track.best)}; waiting for it to level off`);
   if (!dryRun) ns.write(TRACK_FILE, JSON.stringify(track), "w");
 }
 
