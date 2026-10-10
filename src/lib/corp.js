@@ -314,6 +314,38 @@ export function profitLevelledOff(track, now, plateauMs) {
   return now - track.markAt >= plateauMs;
 }
 
+/**
+ * What is wrong with the corp, one line per problem: an office whose average energy or morale
+ * is below `minWellbeing` of its maximum, or a warehouse at least `maxWarehouseUse` full.
+ * corp-office.js keeps both near 95%, so this means it isn't running; a full warehouse stalls
+ * production. Either way the corp's profit is not a healthy plateau, and its offer is cheap:
+ * round 3 went for $39b with morale at 10 and every warehouse full of unsold Plants.
+ *
+ * A site without an `office` or `warehouse` (no API unlock to look, or nothing there) is
+ * skipped.
+ *
+ * @param {{where: string, office?: {avgEnergy: number, maxEnergy: number, avgMorale: number, maxMorale: number},
+ *   warehouse?: {size: number, sizeUsed: number}}[]} sites
+ * @param {{minWellbeing: number, maxWarehouseUse: number}} rule fractions (0.5 = 50%)
+ * @returns {string[]}
+ */
+export function corpHealthProblems(sites, { minWellbeing, maxWarehouseUse }) {
+  const problems = [];
+  const percent = (/** @type {number} */ part, /** @type {number} */ whole) => Math.round((part / whole) * 100);
+  for (const { where, office, warehouse } of sites) {
+    if (office && office.avgEnergy < office.maxEnergy * minWellbeing) {
+      problems.push(`${where} energy ${percent(office.avgEnergy, office.maxEnergy)}%`);
+    }
+    if (office && office.avgMorale < office.maxMorale * minWellbeing) {
+      problems.push(`${where} morale ${percent(office.avgMorale, office.maxMorale)}%`);
+    }
+    if (warehouse && warehouse.sizeUsed >= warehouse.size * maxWarehouseUse) {
+      problems.push(`${where} warehouse ${percent(warehouse.sizeUsed, warehouse.size)}% full`);
+    }
+  }
+  return problems;
+}
+
 // ── Spending hold ───────────────────────────────────────────────────────────
 
 // Valuation averages the last 10 market cycles (~100 s) of growth in the corp's total assets,

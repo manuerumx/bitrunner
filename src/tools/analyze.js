@@ -1,14 +1,13 @@
 import { getServerDetails, scanNetwork } from "/src/lib/scanner.js";
 import { calculateBatch, calculatePrepThreads, isServerPrepped, fitBatchToRAM } from "/src/lib/batch-calculator.js";
-import { getConfig } from "/src/lib/config.js";
-import { DEFAULTS } from "/src/lib/constants.js";
+import { getConfig, homeReserveRAM } from "/src/lib/config.js";
 import { formatMoney, formatRAM, formatTime, formatPercent } from "/src/lib/utils.js";
 
 // Free RAM the hack-coordinator would see right now — same accounting it uses (rooted servers plus
-// home minus reservedHomeRAM), so the "what will actually run" section below matches its log lines.
+// home minus homeReserveRAM), so the "what will actually run" section below matches its log lines.
 /** @param {NS} ns */
 function coordinatorPoolRAM(ns) {
-  let total = Math.max(0, ns.getServerMaxRam("home") - ns.getServerUsedRam("home") - DEFAULTS.reservedHomeRAM);
+  let total = Math.max(0, ns.getServerMaxRam("home") - ns.getServerUsedRam("home") - homeReserveRAM(ns));
   for (const hostname of scanNetwork(ns)) {
     if (!ns.hasRootAccess(hostname)) continue;
     total += Math.max(0, ns.getServerMaxRam(hostname) - ns.getServerUsedRam(hostname));

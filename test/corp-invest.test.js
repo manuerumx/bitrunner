@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { main } from "/src/tools/corp-invest.js";
 import { DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { SPENDING_HOLD_FILE } from "/src/lib/corp.js";
-import { callsTo, makeCorpNs } from "./corp-mock.mjs";
+import { callsTo, makeCorpNs, makeDivision, makeOffice, makeWarehouse } from "./corp-mock.mjs";
 
 const TRACK_FILE = "/data/corp-invest.txt";
 // The mock corp makes 2m revenue against 1m expenses: 1m profit.
@@ -141,6 +141,50 @@ test("bonus time doesn't hold back a round whose profit levelled off", async () 
     await main(ns);
     assert.equal(holdOf(state).round, 1, `bonus time ${bonusTime} ms`);
   }
+});
+
+// A corp whose offices or warehouses are failing earns a cheap offer that isn't the plateau
+// of a healthy one: round 3 went for $39b with morale at 10 and every warehouse full.
+const sick = (office, warehouse) => ({
+  unlocks: ["Office API", "Warehouse API"],
+  divisions: [makeDivision({
+    offices: { "Sector-12": makeOffice({ numEmployees: 3, ...office }) },
+    warehouses: { "Sector-12": makeWarehouse({ size: 1000, sizeUsed: 500, ...warehouse }) },
+  })],
+});
+
+test("a corp in poor shape doesn't hold spending for a round", async () => {
+  for (const [office, warehouse] of [[{ avgMorale: 10 }, {}], [{ avgEnergy: 10 }, {}], [{}, { sizeUsed: 1000 }]]) {
+    const { ns, state } = makeCorpNs({
+      ...sick(office, warehouse),
+      offer: { round: 1, funds: 99e9, shares: 1e8 },
+      files: { [TRACK_FILE]: stale() },
+    });
+    await main(ns);
+    assert.equal(state.files[SPENDING_HOLD_FILE], undefined, JSON.stringify([office, warehouse]));
+    assert.ok(state.log.some((line) => line.includes("poor shape")), JSON.stringify([office, warehouse]));
+  }
+});
+
+test("a corp that falls into poor shape during the hold lifts it instead of accepting", async () => {
+  const { ns, state } = makeCorpNs({
+    ...sick({ avgMorale: 10 }, {}),
+    offer: { round: 1, funds: 99e9, shares: 1e8 },
+    files: { [TRACK_FILE]: stale(), [SPENDING_HOLD_FILE]: hold(1, DEFAULTS.corpHoldSettleMs + 1000) },
+  });
+  await main(ns);
+  assert.deepEqual(callsTo(state, "acceptInvestmentOffer"), []);
+  assert.equal(state.files[SPENDING_HOLD_FILE], "");
+});
+
+test("a corp in good shape still holds and accepts", async () => {
+  const { ns, state } = makeCorpNs({
+    ...sick({}, {}),
+    offer: { round: 1, funds: 99e9, shares: 1e8 },
+    files: { [TRACK_FILE]: stale(), [SPENDING_HOLD_FILE]: hold(1, DEFAULTS.corpHoldSettleMs + 1000) },
+  });
+  await main(ns);
+  assert.equal(callsTo(state, "acceptInvestmentOffer").length, 1);
 });
 
 // A corporation making no profit sits at the valuation floor, so its offer is flat and cheap.

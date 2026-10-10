@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative } from "node:path";
+import { DEFAULTS } from "/src/lib/constants.js";
 
 const ROOT = dirname(dirname(fileURLToPath(import.meta.url)));
 const SRC = join(ROOT, "src");
@@ -41,7 +42,7 @@ const CORP_SCRIPTS = {
   "src/tools/corp-office.js": 151.6,
   "src/tools/corp-boost.js": 141.6,
   "src/tools/corp-research.js": 101.6,
-  "src/tools/corp-invest.js": 81.6,
+  "src/tools/corp-invest.js": 131.6,
 };
 
 function walk(dir) {
@@ -73,3 +74,9 @@ for (const [script, expected] of Object.entries(CORP_SCRIPTS)) {
     assert.equal(Math.round(ram * 10) / 10, expected);
   });
 }
+
+// The hacker leaves this much home RAM free while a corporation exists (lib/config.js
+// homeReserveRAM); a corp script bigger than it would never get room to launch.
+test("corpReservedHomeRAM fits every corp script", () => {
+  assert.ok(DEFAULTS.corpReservedHomeRAM >= Math.max(...Object.values(CORP_SCRIPTS)));
+});

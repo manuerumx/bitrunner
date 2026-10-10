@@ -3,7 +3,7 @@ import { selectTargets, selectXPTarget } from "/src/lib/target-selector.js";
 import { WORKER_RAM, DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { deployWorkers } from "/src/lib/deployer.js";
 import { readPortData } from "/src/lib/port-registry.js";
-import { getConfig } from "/src/lib/config.js";
+import { getConfig, homeReserveRAM } from "/src/lib/config.js";
 import { calculateBatch, isServerPrepped, hwgwBatchDepth, fitBatchToRAM } from "/src/lib/batch-calculator.js";
 import { log, formatMoney, formatTime, formatRAM } from "/src/lib/utils.js";
 
@@ -11,7 +11,7 @@ function getAvailableRAM(ns, hostname) {
   const max = ns.getServerMaxRam(hostname);
   const used = ns.getServerUsedRam(hostname);
   if (hostname === "home") {
-    return Math.max(0, max - used - DEFAULTS.reservedHomeRAM);
+    return Math.max(0, max - used - homeReserveRAM(ns));
   }
   return Math.max(0, max - used);
 }
@@ -35,7 +35,7 @@ function getAllWorkerServers(ns) {
   // Spread work across the WHOLE botnet instead of packing the biggest hosts first.
   // Small rooted network servers are drained first; home is forced to the very end so it is
   // used only as last-resort overflow (home is the most contended host — every manager runs
-  // there — and carries the reservedHomeRAM block).
+  // there — and carries the homeReserveRAM block).
   //
   // This is the fix for "workers only ever run on home + purchased servers": the old
   // descending sort let home + the large purchased servers absorb every per-operation
@@ -59,7 +59,7 @@ function poolFreeRAM(workerServers) {
 // ("this target's smallest batch is bigger than the whole botnet"). Those need opposite
 // responses, and conflating them is what let one target stall the whole coordinator.
 function poolCapacityRAM(ns) {
-  let total = Math.max(0, ns.getServerMaxRam("home") - DEFAULTS.reservedHomeRAM);
+  let total = Math.max(0, ns.getServerMaxRam("home") - homeReserveRAM(ns));
   for (const hostname of scanNetwork(ns)) {
     if (!ns.hasRootAccess(hostname)) continue;
     total += ns.getServerMaxRam(hostname);

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   BOOST_SIZES,
   boostFactors,
+  corpHealthProblems,
   nextResearch,
   optimalBoostAmounts,
   orderJobAssignments,
@@ -303,4 +304,32 @@ test("parseSpendingHold treats a missing or malformed hold as none", () => {
   for (const text of ["", "not json", "null", JSON.stringify({ round: 1 }), JSON.stringify({ since: 5 })]) {
     assert.equal(parseSpendingHold(text, 10, 100), null, text);
   }
+});
+
+// ── corpHealthProblems ──────────────────────────────────────────────────────
+
+const HEALTH_RULE = { minWellbeing: 0.5, maxWarehouseUse: 0.95 };
+const okOffice = { avgEnergy: 90, maxEnergy: 100, avgMorale: 90, maxMorale: 100 };
+const okWarehouse = { size: 1000, sizeUsed: 600 };
+
+test("corpHealthProblems finds nothing wrong in a healthy corp", () => {
+  assert.deepEqual(corpHealthProblems([{ where: "Agri/Aevum", office: okOffice, warehouse: okWarehouse }], HEALTH_RULE), []);
+});
+
+// Morale and energy at 10 and warehouses full of unsold Plants is how round 3 went for $39b.
+test("corpHealthProblems names low energy, low morale and full warehouses", () => {
+  const sites = [
+    { where: "Agri/Aevum", office: { ...okOffice, avgEnergy: 10 }, warehouse: okWarehouse },
+    { where: "Agri/Ishima", office: { ...okOffice, avgMorale: 49 }, warehouse: { size: 1000, sizeUsed: 950 } },
+  ];
+  assert.deepEqual(corpHealthProblems(sites, HEALTH_RULE), [
+    "Agri/Aevum energy 10%",
+    "Agri/Ishima morale 49%",
+    "Agri/Ishima warehouse 95% full",
+  ]);
+});
+
+// Without the Office or Warehouse API the tool can't look, so a missing part is not a problem.
+test("corpHealthProblems skips what it couldn't look at", () => {
+  assert.deepEqual(corpHealthProblems([{ where: "Agri/Aevum" }], HEALTH_RULE), []);
 });

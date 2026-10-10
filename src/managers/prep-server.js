@@ -1,5 +1,6 @@
 import { scanNetwork } from "/src/lib/scanner.js";
-import { WORKER_RAM, DEFAULTS } from "/src/lib/constants.js";
+import { WORKER_RAM } from "/src/lib/constants.js";
+import { homeReserveRAM } from "/src/lib/config.js";
 import { isServerPrepped } from "/src/lib/batch-calculator.js";
 import { log, formatMoney, formatPercent } from "/src/lib/utils.js";
 
@@ -7,7 +8,7 @@ function getAvailableRAM(ns, hostname) {
   const max = ns.getServerMaxRam(hostname);
   const used = ns.getServerUsedRam(hostname);
   if (hostname === "home") {
-    return Math.max(0, max - used - DEFAULTS.reservedHomeRAM);
+    return Math.max(0, max - used - homeReserveRAM(ns));
   }
   return Math.max(0, max - used);
 }

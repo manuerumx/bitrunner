@@ -85,6 +85,9 @@ export const DEFAULTS = {
   minSecurityThreshold: 5,
   moneyThreshold: 0.75,
   reservedHomeRAM: 32,
+  // Extra home RAM kept free while a corporation exists, so the largest corp one-shot
+  // (corp-office.js, 151.6 GB) can launch. See homeReserveRAM in lib/config.js.
+  corpReservedHomeRAM: 152,
   purchasedServerRAM: 8,
   // No maxPurchasedServerRAM here on purpose: server-buyer.js reads the real per-server
   // ceiling from ns.cloud.getRamLimit() (0.05 GB). Hardcoding 1 PB was wrong if this fork's
@@ -184,6 +187,11 @@ export const DEFAULTS = {
   // A gap longer than this between looks at the offer (the game was closed, or corp-invest.js
   // couldn't run) restarts the round's record instead of counting as a plateau.
   corpInvestMaxGapMs: 10 * 60 * 1000,
+  // corp-invest.js takes no round while any office's energy or morale is below
+  // corpInvestMinWellbeing of its maximum, or any warehouse is corpInvestMaxWarehouseUse full:
+  // the corp is failing, and its offer is cheap. See corpHealthProblems in lib/corp.js.
+  corpInvestMinWellbeing: 0.5,
+  corpInvestMaxWarehouseUse: 0.95,
   // Once profit levels off, corp-invest.js holds the corp's spending this long before
   // accepting, so the offer reflects its profit (valuation averages ~100 s of asset growth).
   // A hold older than corpHoldMaxMs is ignored, so a stopped corp-invest.js can't freeze it.

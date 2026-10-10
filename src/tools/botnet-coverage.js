@@ -1,6 +1,7 @@
 import { scanNetwork } from "/src/lib/scanner.js";
-import { WORKER_SCRIPTS, WORKER_RAM, DEFAULTS } from "/src/lib/constants.js";
+import { WORKER_SCRIPTS, WORKER_RAM } from "/src/lib/constants.js";
 import { formatRAM } from "/src/lib/utils.js";
+import { homeReserveRAM } from "/src/lib/config.js";
 
 // Reconciles "N/N rooted" (daemon.js) against the number of servers the game's Active Scripts
 // page actually lists. Those two numbers are SUPPOSED to differ, and by a lot:
@@ -124,7 +125,8 @@ export async function main(ns) {
     ns.tprint(`\n  Worker files present on every script-capable rooted host.`);
   }
 
-  const homeFree = Math.max(0, ns.getServerMaxRam("home") - ns.getServerUsedRam("home") - DEFAULTS.reservedHomeRAM);
-  ns.tprint(`\n  home: ${homeProcs} process(es), ${formatRAM(homeFree)} free after the ${formatRAM(DEFAULTS.reservedHomeRAM)} reserve.`);
+  const reserve = homeReserveRAM(ns);
+  const homeFree = Math.max(0, ns.getServerMaxRam("home") - ns.getServerUsedRam("home") - reserve);
+  ns.tprint(`\n  home: ${homeProcs} process(es), ${formatRAM(homeFree)} free after the ${formatRAM(reserve)} reserve.`);
   for (const p of ns.ps("home")) ns.tprint(`    ${p.filename.padEnd(34)} ${p.threads}t`);
 }
