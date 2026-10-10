@@ -266,57 +266,53 @@ export function nextResearch(priority, owned, costOf, points, spend) {
 
 // ── Investment ──────────────────────────────────────────────────────────────
 
-/** @typedef {{round: number, best: number, mark: number, markAt: number, seenAt: number}} OfferTrack */
+/** @typedef {{round: number, profit: number, markAt: number, seenAt: number}} ProfitTrack */
 
 /**
- * Update the record of this funding round's offers. `best` is the highest offer seen. `mark`
- * and `markAt` are the last offer that beat the previous mark by at least `minGrowth`, and
- * when it came. `seenAt` is when the offer was last looked at.
+ * Update the record of this funding round's profit. `profit` and `markAt` are the last profit
+ * that beat the previous one by at least `minGrowth`, and when it came; a fall moves neither.
+ * `seenAt` is when profit was last looked at.
+ *
+ * Profit, not the offer, is what is watched: the offer is valuation, which averages ~100 s of
+ * asset growth, so every purchase the corp tools make knocks it ~15% for a while. Watching it,
+ * a round never levelled off. Profit says the same thing, whether the corp is still growing,
+ * without the purchases in it.
  *
  * A new round starts a new record, and so does a gap of more than `maxGapMs` since the last
  * look: the corporation stands still while the game is closed, so unwatched time is not time
- * the offer spent not growing. So does an offer more than `dip` below the best: valuation
- * counts the corp's cash, so spending it lowers the offer for good, and the old best won't
- * come back.
+ * profit spent not growing.
  *
- * @param {OfferTrack | null} track
- * @param {{round: number, funds: number}} offer
+ * @param {ProfitTrack | null} track
+ * @param {number} round
+ * @param {number} profit per second
  * @param {number} now ms
- * @param {{minGrowth: number, maxGapMs: number, dip: number}} rule minGrowth and dip as
- *   fractions (0.02 = 2%)
- * @returns {OfferTrack}
+ * @param {{minGrowth: number, maxGapMs: number}} rule minGrowth as a fraction (0.02 = 2%)
+ * @returns {ProfitTrack}
  */
-export function trackOffer(track, offer, now, { minGrowth, maxGapMs, dip }) {
+export function trackProfit(track, round, profit, now, { minGrowth, maxGapMs }) {
   if (
     !track ||
-    track.round !== offer.round ||
+    track.round !== round ||
     now - track.seenAt > maxGapMs ||
-    offer.funds < track.best * (1 - dip)
+    profit > track.profit * (1 + minGrowth)
   ) {
-    return { round: offer.round, best: offer.funds, mark: offer.funds, markAt: now, seenAt: now };
+    return { round, profit, markAt: now, seenAt: now };
   }
-  const best = Math.max(track.best, offer.funds);
-  if (offer.funds > track.mark * (1 + minGrowth)) {
-    return { round: offer.round, best, mark: offer.funds, markAt: now, seenAt: now };
-  }
-  return { ...track, best, seenAt: now };
+  return { ...track, seenAt: now };
 }
 
 /**
- * Accept once the offers have stopped growing: no `minGrowth` jump for `plateauMs`, and the
- * current offer within `dip` of the best seen. Offers swing with the corp's cycle, so this
- * avoids signing at a low.
+ * Whether profit has gone `plateauMs` without growing `minGrowth`: the corp has stopped
+ * growing, so the round's offer won't get much better by waiting.
  *
- * @param {OfferTrack} track
- * @param {{funds: number}} offer
+ * @param {ProfitTrack} track
  * @param {number} now ms
- * @param {{plateauMs: number, dip: number}} rule
+ * @param {number} plateauMs
  * @returns {boolean}
  */
-export function shouldAcceptOffer(track, offer, now, { plateauMs, dip }) {
-  return offer.funds > 0 && now - track.markAt >= plateauMs && offer.funds >= track.best * (1 - dip);
+export function profitLevelledOff(track, now, plateauMs) {
+  return now - track.markAt >= plateauMs;
 }
-
 
 // ── Spending hold ───────────────────────────────────────────────────────────
 

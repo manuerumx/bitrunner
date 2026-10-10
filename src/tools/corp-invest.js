@@ -1,4 +1,4 @@
-import { SPENDING_HOLD_FILE, parseSpendingHold, shouldAcceptOffer, trackOffer } from "/src/lib/corp.js";
+import { SPENDING_HOLD_FILE, parseSpendingHold, profitLevelledOff, trackProfit } from "/src/lib/corp.js";
 import { DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { writePortData } from "/src/lib/port-registry.js";
 import { formatMoney, log, tlog } from "/src/lib/utils.js";
@@ -8,11 +8,12 @@ import { formatMoney, log, tlog } from "/src/lib/utils.js";
 //   run /src/tools/corp-invest.js        act
 //   run /src/tools/corp-invest.js dry    report what it would do
 //
-// Rounds 1 to DEFAULTS.corpInvestRounds are each taken once the offer stops growing (see
-// shouldAcceptOffer). The offers seen so far this round are kept in TRACK_FILE between runs.
-// The offer then isn't accepted straight away: valuation averages the last ~100 s of asset
-// growth, which every purchase cuts, so this first writes SPENDING_HOLD_FILE to stop the other
-// corp tools spending, and accepts DEFAULTS.corpHoldSettleMs later, at whatever the offer is.
+// Rounds 1 to DEFAULTS.corpInvestRounds are each taken once the corp's profit stops growing
+// (see trackProfit; the offer itself swings too much with spending to watch). The record of
+// this round's profit is kept in TRACK_FILE between runs. The offer then isn't accepted
+// straight away: valuation averages the last ~100 s of asset growth, which every purchase
+// cuts, so this first writes SPENDING_HOLD_FILE to stop the other corp tools spending, and
+// accepts DEFAULTS.corpHoldSettleMs later, at whatever the offer is.
 // After the last round the corporation goes public issuing no new shares, which keeps your
 // ownership, and then pays DEFAULTS.corpDividendRate of profit as dividends. Dividends are the
 // only way corporation profit reaches your own money.
@@ -25,7 +26,7 @@ const TRACK_FILE = "/data/corp-invest.txt";
 
 /**
  * @param {NS} ns
- * @returns {OfferTrack | null}
+ * @returns {ProfitTrack | null}
  */
 function readTrack(ns) {
   let track;
@@ -34,11 +35,11 @@ function readTrack(ns) {
   } catch {
     return null; // no file yet
   }
-  // A record missing a field (an old format, or edited by hand) would never accept.
-  const fields = ["round", "best", "mark", "markAt", "seenAt"];
+  // A record missing a field (an older version's, or edited by hand) is no record.
+  const fields = ["round", "profit", "markAt", "seenAt"];
   return track && fields.every((field) => Number.isFinite(track[field])) ? track : null;
 }
-/** @typedef {import("/src/lib/corp.js").OfferTrack} OfferTrack */
+/** @typedef {import("/src/lib/corp.js").ProfitTrack} ProfitTrack */
 /** @typedef {import("/src/lib/corp.js").SpendingHold} SpendingHold */
 
 /** @param {NS} ns */
@@ -82,12 +83,11 @@ export async function main(ns) {
   }
 
   const now = Date.now();
-  const track = trackOffer(readTrack(ns), offer, now, {
+  const profit = corp.revenue - corp.expenses;
+  const track = trackProfit(readTrack(ns), offer.round, profit, now, {
     minGrowth: DEFAULTS.corpInvestMinGrowth,
     maxGapMs: DEFAULTS.corpInvestMaxGapMs,
-    dip: DEFAULTS.corpInvestDip,
   });
-  const rule = { plateauMs: DEFAULTS.corpInvestPlateauMs, dip: DEFAULTS.corpInvestDip };
   const hold = parseSpendingHold(ns.read(SPENDING_HOLD_FILE), now, DEFAULTS.corpHoldMaxMs);
   const where = `round ${offer.round} offer ${formatMoney(offer.funds)}`;
 
@@ -110,8 +110,8 @@ export async function main(ns) {
     return;
   }
 
-  if (shouldAcceptOffer(track, offer, now, rule)) {
-    tlog(ns, `corp-invest: ${where} has levelled off; ${dryRun ? "would hold" : "holding"} the corp's spending so the offer shows its profit`);
+  if (profitLevelledOff(track, now, DEFAULTS.corpInvestPlateauMs)) {
+    tlog(ns, `corp-invest: ${where}; profit has levelled off, ${dryRun ? "would hold" : "holding"} the corp's spending so the offer shows it`);
     if (dryRun) return;
     /** @type {SpendingHold} */
     const record = { round: offer.round, since: now };
@@ -120,7 +120,9 @@ export async function main(ns) {
     return;
   }
 
-  say(`corp-invest: ${where}, best ${formatMoney(track.best)}; waiting for it to level off`);
+  const flatMin = Math.floor((now - track.markAt) / 60e3);
+  const needMin = Math.round(DEFAULTS.corpInvestPlateauMs / 60e3);
+  say(`corp-invest: ${where}; profit ${formatMoney(profit)}/s, flat for ${flatMin} of ${needMin} min`);
   if (!dryRun) ns.write(TRACK_FILE, JSON.stringify(track), "w");
 }
 

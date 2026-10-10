@@ -11,8 +11,8 @@ import {
   planJobs,
   planSetup,
   planUpgrades,
-  shouldAcceptOffer,
-  trackOffer,
+  profitLevelledOff,
+  trackProfit,
   wellbeingActions,
 } from "/src/lib/corp.js";
 
@@ -252,71 +252,40 @@ test("nextResearch has nothing left once everything is owned", () => {
 });
 
 
-// ── trackOffer / shouldAcceptOffer ──────────────────────────────────────────
+// ── trackProfit / profitLevelledOff ─────────────────────────────────────────
 
-const TRACK_RULE = { minGrowth: 0.02, maxGapMs: 10, dip: 0.05 };
+const TRACK_RULE = { minGrowth: 0.02, maxGapMs: 10 };
 
-test("trackOffer starts a record on the first offer of a round", () => {
-  assert.deepEqual(trackOffer(null, { round: 1, funds: 100 }, 5, TRACK_RULE), {
-    round: 1, best: 100, mark: 100, markAt: 5, seenAt: 5,
-  });
-  const old = { round: 1, best: 500, mark: 500, markAt: 0, seenAt: 4 };
-  assert.deepEqual(trackOffer(old, { round: 2, funds: 100 }, 5, TRACK_RULE), {
-    round: 2, best: 100, mark: 100, markAt: 5, seenAt: 5,
-  });
+test("trackProfit starts a record on the first look at a round", () => {
+  assert.deepEqual(trackProfit(null, 1, 100, 5, TRACK_RULE), { round: 1, profit: 100, markAt: 5, seenAt: 5 });
+  const old = { round: 1, profit: 500, markAt: 0, seenAt: 4 };
+  assert.deepEqual(trackProfit(old, 2, 100, 5, TRACK_RULE), { round: 2, profit: 100, markAt: 5, seenAt: 5 });
 });
 
-test("trackOffer moves the mark only on growth of at least minGrowth", () => {
-  const track = { round: 1, best: 100, mark: 100, markAt: 0, seenAt: 0 };
-  assert.deepEqual(trackOffer(track, { round: 1, funds: 101 }, 5, TRACK_RULE), {
-    round: 1, best: 101, mark: 100, markAt: 0, seenAt: 5,
-  });
-  assert.deepEqual(trackOffer(track, { round: 1, funds: 110 }, 5, TRACK_RULE), {
-    round: 1, best: 110, mark: 110, markAt: 5, seenAt: 5,
-  });
+test("trackProfit moves the mark only on growth of at least minGrowth", () => {
+  const track = { round: 1, profit: 100, markAt: 0, seenAt: 0 };
+  assert.deepEqual(trackProfit(track, 1, 101, 5, TRACK_RULE), { ...track, seenAt: 5 });
+  assert.deepEqual(trackProfit(track, 1, 110, 5, TRACK_RULE), { round: 1, profit: 110, markAt: 5, seenAt: 5 });
 });
 
-test("trackOffer keeps the best offer when the offer dips within dip", () => {
-  const track = { round: 1, best: 100, mark: 100, markAt: 0, seenAt: 0 };
-  assert.deepEqual(trackOffer(track, { round: 1, funds: 95 }, 5, TRACK_RULE), { ...track, seenAt: 5 });
+// A fall is not growth: the corp has stopped growing, which is what the wait is for.
+test("trackProfit keeps the mark when profit falls", () => {
+  const track = { round: 1, profit: 100, markAt: 0, seenAt: 0 };
+  assert.deepEqual(trackProfit(track, 1, 60, 5, TRACK_RULE), { ...track, seenAt: 5 });
 });
 
-// Spending the corp's cash lowers its valuation for good: an offer that falls past the dip
-// won't come back to the old best, so waiting for it would stall the round.
-test("trackOffer restarts the record when the offer falls more than dip below the best", () => {
-  const track = { round: 1, best: 100, mark: 100, markAt: 0, seenAt: 0 };
-  assert.deepEqual(trackOffer(track, { round: 1, funds: 94 }, 5, TRACK_RULE), {
-    round: 1, best: 94, mark: 94, markAt: 5, seenAt: 5,
-  });
+// The corporation stands still while the game is closed. Time nobody watched is not time
+// profit spent not growing, so a gap restarts the record.
+test("trackProfit restarts the record after a gap in watching", () => {
+  const track = { round: 1, profit: 100, markAt: 0, seenAt: 0 };
+  assert.deepEqual(trackProfit(track, 1, 100, 20, TRACK_RULE), { round: 1, profit: 100, markAt: 20, seenAt: 20 });
 });
 
-// The corporation stands still while the game is closed. Time nobody watched the offer is not
-// time it spent not growing, so a gap restarts the record.
-test("trackOffer restarts the record after a gap in watching", () => {
-  const track = { round: 1, best: 100, mark: 100, markAt: 0, seenAt: 0 };
-  assert.deepEqual(trackOffer(track, { round: 1, funds: 100 }, 20, TRACK_RULE), {
-    round: 1, best: 100, mark: 100, markAt: 20, seenAt: 20,
-  });
+test("profitLevelledOff waits plateauMs since the last growth", () => {
+  const track = { round: 1, profit: 100, markAt: 0, seenAt: 0 };
+  assert.equal(profitLevelledOff(track, 999, 1000), false);
+  assert.equal(profitLevelledOff(track, 1000, 1000), true);
 });
-
-const RULE = { plateauMs: 1000, dip: 0.05 };
-
-test("shouldAcceptOffer waits until the offer has stopped growing", () => {
-  const track = { round: 1, best: 100, mark: 100, markAt: 0 };
-  assert.equal(shouldAcceptOffer(track, { funds: 100 }, 999, RULE), false);
-  assert.equal(shouldAcceptOffer(track, { funds: 100 }, 1000, RULE), true);
-});
-
-test("shouldAcceptOffer doesn't sign at a dip", () => {
-  const track = { round: 1, best: 100, mark: 100, markAt: 0 };
-  assert.equal(shouldAcceptOffer(track, { funds: 95 }, 5000, RULE), true);
-  assert.equal(shouldAcceptOffer(track, { funds: 94 }, 5000, RULE), false);
-});
-
-test("shouldAcceptOffer never accepts an empty offer", () => {
-  assert.equal(shouldAcceptOffer({ round: 1, best: 0, mark: 0, markAt: 0 }, { funds: 0 }, 5000, RULE), false);
-});
-
 
 // ── parseSpendingHold ───────────────────────────────────────────────────────
 

@@ -176,18 +176,15 @@ export const DEFAULTS = {
     "Overclock", "Sti.mu", "Automatic Drug Administration", "Go-Juice", "CPH4 Injections",
   ],
   corpResearchSpend: 0.5,
-  // Funding rounds corp-invest.js takes before going public. Each is accepted once the offer
-  // has grown less than corpInvestMinGrowth for corpInvestPlateauMs and is within
-  // corpInvestDip of the best offer seen in that round. An offer that falls further than
-  // corpInvestDip below the best restarts the round's record from where it is.
+  // Funding rounds corp-invest.js takes before going public. Each is taken once the corp's
+  // profit has grown less than corpInvestMinGrowth for corpInvestPlateauMs.
   corpInvestRounds: 4,
   corpInvestPlateauMs: 15 * 60 * 1000,
   corpInvestMinGrowth: 0.02,
-  corpInvestDip: 0.05,
   // A gap longer than this between looks at the offer (the game was closed, or corp-invest.js
   // couldn't run) restarts the round's record instead of counting as a plateau.
   corpInvestMaxGapMs: 10 * 60 * 1000,
-  // Once an offer levels off, corp-invest.js holds the corp's spending this long before
+  // Once profit levels off, corp-invest.js holds the corp's spending this long before
   // accepting, so the offer reflects its profit (valuation averages ~100 s of asset growth).
   // A hold older than corpHoldMaxMs is ignored, so a stopped corp-invest.js can't freeze it.
   corpHoldSettleMs: 3 * 60 * 1000,
