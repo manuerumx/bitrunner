@@ -1,5 +1,5 @@
 import { scanNetwork } from "/src/lib/scanner.js";
-import { selectTargets, selectXPTarget } from "/src/lib/target-selector.js";
+import { selectTargets, selectXPTarget, hwgwTargetCount } from "/src/lib/target-selector.js";
 import { WORKER_RAM, DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { deployWorkers } from "/src/lib/deployer.js";
 import { readPortData } from "/src/lib/port-registry.js";
@@ -202,10 +202,10 @@ export async function main(ns) {
       continue;
     }
 
-    // Select investment targets (top by maxMoney potential)
-    // Scale targets with the pool, capped at 10 — more parallel income streams (and more of
-    // the botnet working) when RAM is plentiful.
-    const targetCount = Math.max(3, Math.min(10, Math.floor(totalFreeRAM / 256)));
+    // Select investment targets (top by maxMoney potential), scaled with the pool up to
+    // cfg.hwgwMaxTargets — more parallel income streams (and more of the botnet working) when RAM
+    // is plentiful.
+    const targetCount = hwgwTargetCount(totalFreeRAM, cfg.hwgwMaxTargets);
     const targets = selectTargets(ns, targetCount);
 
     if (targets.length === 0) {

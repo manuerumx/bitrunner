@@ -81,7 +81,9 @@ export const PROGRAMS = [
 export const DARKWEB_EXTRAS = ["Formulas.exe", "DarkscapeNavigator.exe"];
 
 export const DEFAULTS = {
-  hackPercent: 0.7,
+  // Ceiling on the steal per HWGW batch (see hwgwMinHackPercent below). 0.9 earns ~29% more per
+  // batch than 0.7; the bigger grow leg is affordable once targets, not RAM, limit the botnet.
+  hackPercent: 0.9,
   minSecurityThreshold: 5,
   moneyThreshold: 0.75,
   reservedHomeRAM: 32,
@@ -222,6 +224,9 @@ export const DEFAULTS = {
   // other prepped targets instead of one maximal batch swallowing the botnet. If even one batch at
   // the minimum steal won't fit in that share, the sizer falls back to the whole free pool.
   hwgwFitBatches: 4,
+  // Most targets the coordinator works at once (it also keeps one per 256 GB of free pool). 100 is
+  // effectively every rooted server with money; lower it to concentrate on the richest.
+  hwgwMaxTargets: 100,
   managerCycleMs: 5000,
   rooterCycleMs: 30000,
   serverBuyerCycleMs: 60000,

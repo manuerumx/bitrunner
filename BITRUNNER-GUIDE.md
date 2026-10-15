@@ -475,12 +475,15 @@ run src/tools/hwgw-tune.js waves 6         # set hwgwBatchWaves
 run src/tools/hwgw-tune.js max 800         # set hwgwMaxBatches
 run src/tools/hwgw-tune.js fit 6           # set hwgwFitBatches (batch size vs. the free pool)
 run src/tools/hwgw-tune.js min 0.005       # set hwgwMinHackPercent (floor on the steal fraction)
+run src/tools/hwgw-tune.js pct 0.7         # set hackPercent (ceiling on the steal fraction)
+run src/tools/hwgw-tune.js targets 20      # set hwgwMaxTargets (servers worked at once)
 run src/tools/hwgw-tune.js reset           # clear overrides
 ```
 Live-tunes HWGW batching. `waves`/`max` control pipeline **depth** — higher = more income/sec but
 longer, less responsive cycles. `fit`/`min` control batch **size**: each batch is sized to fit
 `poolFree / fit`, and `min` is the steal fraction below which the coordinator gives up on HWGW for
-that target and preps/hacks instead. RAM is still the hard limiter.
+that target and preps/hacks instead. `pct` is the steal ceiling itself, and `targets` caps how many
+servers are worked at once. RAM is still the hard limiter.
 
 #### `tools/stasis.js` — Darknet Stasis Links
 
@@ -773,7 +776,7 @@ Weaken2 ────────────────────────
 After all four land, the server is back to perfect conditions — ready for the next batch.
 
 **Thread calculation** (per batch):
-- `hackThreads`: Enough to steal the fitted steal fraction (at most `hackPercent`, default 70% — see "Batch sizing" below) of max money
+- `hackThreads`: Enough to steal the fitted steal fraction (at most `hackPercent`, default 90% — see "Batch sizing" below) of max money
 - `weaken1Threads`: Enough to counter hack's security increase
 - `growThreads`: Enough to restore money from `(1 - steal fraction)` back to max
 - `weaken2Threads`: Enough to counter grow's security increase
@@ -905,7 +908,7 @@ ns.writePort(5, JSON.stringify({
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `hackPercent` | 0.7 | **Ceiling** on the fraction of max money stolen per HWGW batch (0.01–0.99). The coordinator shrinks it per target until the batch fits the pool |
+| `hackPercent` | 0.9 | **Ceiling** on the fraction of max money stolen per HWGW batch (0.01–0.99). The coordinator shrinks it per target until the batch fits the pool |
 | `minSecurityThreshold` | 5 | Max security above minimum before proto-batch switches to weaken |
 | `moneyThreshold` | 0.75 | Fraction of max money required before proto-batch will hack |
 | `reservedHomeRAM` | 32 | GB reserved on home for managers (not used by workers) |
@@ -919,6 +922,7 @@ ns.writePort(5, JSON.stringify({
 | `hwgwBatchWaves` | 4 | HWGW pipeline depth multiplier per target (tune with `hwgw-tune.js`) |
 | `hwgwMaxBatches` | 500 | Hard cap on HWGW batches per target per cycle |
 | `hwgwFitBatches` | 4 | Batches the sizer aims to fit in the free pool per target — each batch is sized to `poolFree / this` |
+| `hwgwMaxTargets` | 100 | Most servers the coordinator works at once (it also keeps one per 256 GB of free pool). Each target's pipeline is bounded by batch timing, not RAM, so more targets is what fills a big botnet |
 | `hwgwMinHackPercent` | 0.01 | Floor on the shrunken steal fraction. Below it, HWGW is declared infeasible for that target and prep/hack-income runs instead |
 | `xpFarmRAM` | false | Soak surplus RAM with the EXP farm instead of `share()` (toggle with `xp-farm.js`) |
 | `shareIdleRAM` | false | Force `share()` on surplus RAM even without an active faction grind (toggle with `share-idle.js`) |
@@ -928,7 +932,7 @@ ns.writePort(5, JSON.stringify({
 ### Tuning Tips
 
 - **Low RAM (< 64 GB home)**: Lower `reservedHomeRAM` to 16, or only run the hack-coordinator and rooter
-- **Aggressive hacking**: Raise the `hackPercent` ceiling to 0.9 (more money per batch — but see "Batch sizing" below: it only takes effect if the batch fits)
+- **Safer hacking**: Lower the `hackPercent` ceiling to 0.7 (`hwgw-tune.js pct 0.7`) — less money per batch, but a batch that lands out of order drains the target less
 - **Conservative hacking**: Set `hackPercent` to 0.1 (less money per batch, but very stable — good for stock manipulation)
 - **Stock-aware hacking**: Set `hackPercent` low when stock-trader is active to minimize market disruption
 - **Nothing dispatching on a rich target**: that's a sizing problem, not a RAM leak — see "Batch sizing" below and `hwgw-tune.js fit` / `min`

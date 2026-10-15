@@ -46,6 +46,13 @@ export function rankTargets(ns, servers) {
   return scored;
 }
 
+// How many targets the hack-coordinator works this cycle: one per 256 GB of free pool, at least 3,
+// at most maxTargets. A fixed cap of 10 left a 9.5 PB botnet 99% idle — each target's pipeline is
+// bounded by batch timing (one batch per stride), not RAM, so only more targets use more RAM.
+export function hwgwTargetCount(freeRAM, maxTargets) {
+  return Math.max(3, Math.min(maxTargets, Math.floor(freeRAM / 256)));
+}
+
 /** @param {NS} ns */
 export function selectTargets(ns, count = 1) {
   const hostnames = scanNetwork(ns);
