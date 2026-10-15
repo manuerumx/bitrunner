@@ -2,7 +2,7 @@ import { log, formatMoney } from "/src/lib/utils.js";
 import { scanNetwork } from "/src/lib/scanner.js";
 import { PORTS } from "/src/lib/constants.js";
 import { writePortData } from "/src/lib/port-registry.js";
-import { companiesToUnlock } from "/src/lib/companies.js";
+import { companiesToUnlock, companyJobField } from "/src/lib/companies.js";
 import { FACTION_WORK_TYPES, betterFactionWorkTypes } from "/src/lib/faction-work.js";
 
 // Yielded to while it runs — see the takeover guard in the work loop below.
@@ -101,11 +101,13 @@ function getPendingFactions(ns) {
 // sleeve-manager.js sends idle sleeves there to earn the 400k company rep the faction
 // invitation needs. Re-applying every cycle is also how promotions are picked up —
 // applyToCompany returns null when there is nothing new to get, including when hacking
-// is still too low to be hired at all.
+// is still too low to be hired at all. It re-applies in the field already held: applying
+// in another one swaps the job, and would undo tools/sleeve-company.js's Business job.
 function holdCompanyJobs(ns) {
+  const jobs = ns.getPlayer().jobs;
   for (const company of companiesToUnlock(getJoinedFactions(ns))) {
     try {
-      const job = ns.singularity.applyToCompany(company, "Software");
+      const job = ns.singularity.applyToCompany(company, companyJobField(jobs[company]));
       if (job) log(ns, `${company}: now ${job}`);
     } catch {}
   }

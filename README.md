@@ -76,6 +76,8 @@ These are **not** auto-run, because installing augmentations triggers a soft res
 | `run src/tools/crime.js` | none | SF-4 | This BitNode's money multipliers + every crime ranked by expected `$/sec` and `karma/sec`. Commits nothing. |
 | `run src/tools/crime.js start [karma]` | optional `karma` | SF-4 | Starts the crime loop, ranking on money (or on karma, for the gang unlock). **Stops faction rep** — see below. |
 | `run src/tools/crime.js stop` | `stop` | SF-4 | Stops the loop and releases the player. |
+| `run src/tools/sleeve-company.js` | none | SF-10 + SF-4 | Puts every sleeve on a company job and climbs your Business title to CEO at the best-paying companies. Disables `sleeve-manager.js` while it runs. |
+| `run src/tools/sleeve-company.js stop` | `stop` | SF-10 + SF-4 | Stops it and re-enables `sleeve-manager.js`. |
 | `run src/tools/stanek.js` | none | BN-13/SF-13 | Shows Stanek's Gift board and every placed fragment. |
 | `run src/tools/stanek.js place` | `place` | BN-13/SF-13 | Greedily fills the board, hacking fragments first, boosters last. |
 | `run src/tools/stanek.js charge` | `charge` | BN-13/SF-13 | Charges every placed fragment, evenly, forever. Fragments do nothing until charged. |

@@ -105,6 +105,7 @@ src/
     ├── hwgw-tune.js, xp-farm.js, share-idle.js  ← runtime config toggles
     ├── gang-train.js                            ← force every gang member to train
     ├── manager-toggle.js                        ← enable/disable daemon managers
+    ├── sleeve-company.js                         ← sleeves on company work, climb to CEO
     ├── ram-report.js                             ← per-manager / per-function RAM audit
     ├── program-buyer.js, home-upgrader.js        ← one-shot buyers (SF-4)
     ├── market-access.js                          ← one-shot buyer (WSE ladder)
@@ -307,6 +308,13 @@ These require specific Source Files or BitNode conditions. Each checks for API a
 - **Buys capacity**: a new sleeve when `getSleeveCost()` fits `DEFAULTS.sleeveBudgetPercent`, then memory upgrades cheapest-first. A new sleeve outranks memory because it compounds; memory outranks everything else because it *survives an augmentation install*, unlike shock and sync.
 - **Idempotent assignment**: it now reads `getTask()` and skips a sleeve that's already doing what was chosen. Re-issuing a `setTo*` call restarts the task, and crimes and faction work accumulate cycles toward a payout — so the old unconditional re-assignment every 30 s could hold a sleeve permanently at zero progress.
 - **Sleeve count is re-read every cycle.** It used to be read once before the loop, so a sleeve bought mid-run was never assigned work until the daemon restarted the manager.
+
+#### `tools/sleeve-company.js` — Sleeves on Company Work, Climb to CEO
+- **Requires**: Source-File 10 (sleeves) and Source-File 4 (Singularity). Run by hand: `run /src/tools/sleeve-company.js`; `... stop` hands the sleeves back.
+- **Takes over the sleeves**: on start it disables the daemon's `sleeve` manager and kills `sleeve-manager.js`, the same way `manager-toggle.js off sleeve` does. No shock recovery or sleeve augmentations until `stop`.
+- **Picks companies** with a Chief Executive Officer position, ranked by its salary, as many as you have sleeves. Each 30 s it calls `applyToCompany(company, "Business")` there: that hires you, or promotes you once you qualify. You hold one job per company, so this replaces a Software job there; `faction-manager.js` re-applies in whichever field you hold, so it won't switch it back.
+- **The promotion is yours, not the sleeve's.** A sleeve works *your* job at the company, paid by your title and its own stats. Its work earns the company rep the next title needs; your charisma and hacking do the rest. The script log shows each company's title and what blocks the next promotion (e.g. `charisma 412/500`).
+- **One sleeve per company**, best-paid first. A sleeve already at a target stays put; sleeves without a company keep whatever they were doing.
 
 #### Corporation (BitNode 3) — `tools/corp-*.js`
 - **Requires**: BitNode 3, or Source-File 3 elsewhere. Seed money only exists in BN3; elsewhere create the corporation yourself (self-funded, $150b).

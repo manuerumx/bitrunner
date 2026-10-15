@@ -19,6 +19,7 @@ declare global {
   type GymType = Parameters<NS["sleeve"]["setToGymWorkout"]>[2];
   type CrimeType = Parameters<NS["sleeve"]["setToCommitCrime"]>[1];
   type CompanyName = Parameters<NS["sleeve"]["setToCompanyWork"]>[1];
+  type JobName = Parameters<NS["singularity"]["getCompanyPositionInfo"]>[1];
   type HacknetServerHashUpgrade = Parameters<NS["hacknet"]["spendHashes"]>[0];
   type GoOpponent = Parameters<NS["go"]["resetBoardState"]>[0];
   type BladeburnerCityName = Parameters<NS["bladeburner"]["switchCity"]>[0];
