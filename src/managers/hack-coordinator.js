@@ -4,7 +4,7 @@ import { WORKER_RAM, DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { deployWorkers } from "/src/lib/deployer.js";
 import { readPortData } from "/src/lib/port-registry.js";
 import { getConfig, homeReserveRAM } from "/src/lib/config.js";
-import { calculateBatch, isServerPrepped, hwgwBatchDepth, fitBatchToRAM } from "/src/lib/batch-calculator.js";
+import { calculateBatch, isServerPrepped, planPrep, hwgwBatchDepth, fitBatchToRAM } from "/src/lib/batch-calculator.js";
 import { log, formatMoney, formatTime, formatRAM } from "/src/lib/utils.js";
 
 function getAvailableRAM(ns, hostname) {
@@ -115,40 +115,24 @@ function allocateThreads(ns, workerServers, script, threadsNeeded, target, delay
 
 // --- SMART PREP (weaken-first, exact thread counts) ---
 //
-// grow is INEFFECTIVE at high security — the game's growth formula
-// penalizes security above minimum. So we weaken to min FIRST,
-// then grow in the next cycle once security is low.
+// planPrep decides the threads (weaken-only while security is high, since grow is ineffective
+// there; grow + residual weaken near min). Here we add the weaken that offsets the grow we
+// actually managed to place.
 
 function prepTarget(ns, hostname, workerServers) {
-  const currentSecurity = ns.getServerSecurityLevel(hostname);
-  const minSecurity = ns.getServerMinSecurityLevel(hostname);
-  const currentMoney = ns.getServerMoneyAvailable(hostname);
-  const maxMoney = ns.getServerMaxMoney(hostname);
+  const plan = planPrep(ns, hostname);
 
   let threadsUsed = 0;
-  const secDiff = currentSecurity - minSecurity;
-
-  if (secDiff > 0.5) {
-    // Security too high — weaken only, don't waste grow threads.
-    const weakenNeeded = Math.ceil(secDiff / ns.weakenAnalyze(1));
+  let weakenNeeded = plan.weakenThreads;
+  if (plan.growThreads > 0) {
+    const actualGrow = allocateThreads(ns, workerServers, "/src/grow.js", plan.growThreads, hostname);
+    threadsUsed += actualGrow;
+    if (actualGrow > 0) {
+      weakenNeeded += Math.ceil(ns.growthAnalyzeSecurity(actualGrow, hostname) / ns.weakenAnalyze(1));
+    }
+  }
+  if (weakenNeeded > 0) {
     threadsUsed += allocateThreads(ns, workerServers, "/src/weaken.js", weakenNeeded, hostname);
-  } else if (currentMoney < maxMoney * 0.99) {
-    // Security at minimum — grow money + compensating weaken.
-    let growNeeded = 0;
-    if (currentMoney > 0) {
-      growNeeded = Math.ceil(ns.growthAnalyze(hostname, maxMoney / currentMoney));
-    } else {
-      growNeeded = Math.ceil(ns.growthAnalyze(hostname, Math.min(maxMoney, 1e6)));
-    }
-    if (growNeeded > 0 && isFinite(growNeeded)) {
-      const actualGrow = allocateThreads(ns, workerServers, "/src/grow.js", growNeeded, hostname);
-      threadsUsed += actualGrow;
-      if (actualGrow > 0) {
-        const growSecIncrease = ns.growthAnalyzeSecurity(actualGrow, hostname);
-        const weakenForGrow = Math.ceil(growSecIncrease / ns.weakenAnalyze(1));
-        threadsUsed += allocateThreads(ns, workerServers, "/src/weaken.js", weakenForGrow, hostname);
-      }
-    }
   }
 
   return threadsUsed;

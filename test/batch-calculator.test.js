@@ -4,6 +4,7 @@ import {
   calculateBatch,
   calculatePrepThreads,
   isServerPrepped,
+  planPrep,
   maxBatches,
   hwgwBatchDepth,
   fitBatchToRAM,
@@ -174,4 +175,44 @@ test("fitBatchToRAM never returns a batch above the requested ceiling", () => {
   const ns = makeScalingNs();
   const fit = fitBatchToRAM(ns, "x", 1e9, 0.25, 0.01);
   assert.equal(fit.hackPercent, 0.25);
+});
+
+// Every state that isServerPrepped rejects must get SOME prep work, or the target sits in the
+// coordinator's top-N list forever: not prepped (so no HWGW) and nothing to prep (so no prep).
+test("planPrep plans work for every state isServerPrepped rejects", () => {
+  for (const sec of [10, 10.04, 10.06, 10.3, 10.5, 10.6, 20]) {
+    for (const money of [0, 500_000, 989_000, 990_000, 1_000_000]) {
+      const ns = makeNs({ getServerSecurityLevel: () => sec, getServerMoneyAvailable: () => money });
+      if (isServerPrepped(ns, "x")) continue;
+      const plan = planPrep(ns, "x");
+      assert.ok(plan.weakenThreads + plan.growThreads > 0, `no prep planned at sec=${sec} money=${money}`);
+    }
+  }
+});
+
+test("planPrep weakens a small security residual on a full server", () => {
+  // 0.25 above min, full money: the band the old 0.5 weaken threshold skipped.
+  const plan = planPrep(makeNs({ getServerSecurityLevel: () => 10.25 }), "x");
+  assert.deepEqual(plan, { weakenThreads: 5, growThreads: 0 });
+});
+
+test("planPrep weakens only, without growing, while security is well above min", () => {
+  const plan = planPrep(makeNs({ getServerSecurityLevel: () => 20, getServerMoneyAvailable: () => 500_000 }), "x");
+  assert.deepEqual(plan, { weakenThreads: 200, growThreads: 0 });
+});
+
+test("planPrep grows and clears the residual together once security is near min", () => {
+  const plan = planPrep(makeNs({ getServerSecurityLevel: () => 10.1, getServerMoneyAvailable: () => 500_000 }), "x");
+  assert.deepEqual(plan, { weakenThreads: 2, growThreads: 100 });
+});
+
+// growthAnalyzeSecurity(threads, host) caps threads at what host needs to reach max money from its
+// CURRENT money. A batch is sized on a prepped (full) server, so passing host returns 0 and the
+// batch ships with no grow-compensating weaken — every batch then leaves security above min.
+test("calculateBatch offsets the grow leg's security even on a full server", () => {
+  const ns = makeNs({
+    growthAnalyzeSecurity: (threads, host) => (host === undefined ? threads * 0.005 : 0),
+  });
+  const b = calculateBatch(ns, "x", 0.7);
+  assert.equal(b.weakenAfterGrowThreads, 10);
 });

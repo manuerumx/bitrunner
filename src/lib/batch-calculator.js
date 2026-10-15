@@ -45,7 +45,9 @@ export function calculateBatch(ns, hostname, hackPercent = DEFAULTS.hackPercent,
   const growthNeeded = moneyAfterHack > 0 ? maxMoney / moneyAfterHack : 100;
   const growThreads = Math.ceil(ns.growthAnalyze(hostname, growthNeeded));
 
-  const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreads, hostname);
+  // No host: with one, the game caps threads at what the server needs from its CURRENT money, and
+  // a batch is sized on a full server, so it reported 0 and every batch shipped W2 = 0.
+  const growSecurityIncrease = ns.growthAnalyzeSecurity(growThreads);
   const weakenAfterGrowThreads = Math.ceil(growSecurityIncrease / ns.weakenAnalyze(1));
 
   const hackTime = ns.getHackTime(hostname);
@@ -100,6 +102,33 @@ export function isServerPrepped(ns, hostname) {
   const maxMoney = ns.getServerMaxMoney(hostname);
 
   return currentSecurity <= minSecurity + 0.05 && currentMoney >= maxMoney * 0.99;
+}
+
+// Threads the coordinator's prep phase should send to a target isServerPrepped rejects.
+//
+// grow is INEFFECTIVE at high security (the growth formula penalizes security above minimum), so
+// well above min we weaken only and grow next cycle. Near min we grow and clear the residual in the
+// same pass; the caller adds the weaken that offsets its grow on top of weakenThreads.
+//
+// The residual weaken is what keeps this in step with isServerPrepped. Weakening only above +0.5
+// left a band (+0.05..+0.5 security, full money) that was neither prepped nor preppable: the target
+// held a top-N slot forever with no HWGW, no prep and no log line, starving every other target.
+/** @param {NS} ns */
+export function planPrep(ns, hostname) {
+  const secDiff = ns.getServerSecurityLevel(hostname) - ns.getServerMinSecurityLevel(hostname);
+  const currentMoney = ns.getServerMoneyAvailable(hostname);
+  const maxMoney = ns.getServerMaxMoney(hostname);
+  const weakenThreads = secDiff > 0 ? Math.ceil(secDiff / ns.weakenAnalyze(1)) : 0;
+
+  if (secDiff > 0.5) return { weakenThreads, growThreads: 0 };
+
+  let growThreads = 0;
+  if (currentMoney < maxMoney * 0.99) {
+    const growth = currentMoney > 0 ? maxMoney / currentMoney : Math.min(maxMoney, 1e6);
+    const needed = Math.ceil(ns.growthAnalyze(hostname, growth));
+    if (needed > 0 && isFinite(needed)) growThreads = needed;
+  }
+  return { weakenThreads, growThreads };
 }
 
 export function maxBatches(availableRAM, batchRAM) {
