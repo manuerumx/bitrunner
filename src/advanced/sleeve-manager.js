@@ -3,8 +3,10 @@ import { DEFAULTS, PORTS } from "/src/lib/constants.js";
 import { hasFormulas } from "/src/lib/formulas.js";
 import { readPortData } from "/src/lib/port-registry.js";
 import {
+  assignBladeburner,
   assignCompanies,
   assignFactions,
+  bladeburnerTaskFor,
   canBuySleeveAugs,
   chooseSleeveCrime,
   chooseSleeveTask,
@@ -61,6 +63,48 @@ function gangFaction(ns) {
   } catch {
     return null;
   }
+}
+
+/** @param {NS} ns */
+function inBladeburner(ns) {
+  try {
+    return ns.bladeburner.inBladeburner();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * This sleeve's view of every contract: its own success chance (the low end of the
+ * estimate) and how many are left, a count it shares with the player.
+ *
+ * @param {NS} ns
+ * @param {number} sleeveNum
+ */
+function sleeveContracts(ns, sleeveNum) {
+  return ns.bladeburner.getContractNames().map((name) => ({
+    name,
+    chance: ns.bladeburner.getActionEstimatedSuccessChance("Contracts", name, sleeveNum)[0],
+    count: ns.bladeburner.getActionCountRemaining("Contracts", name),
+  }));
+}
+
+/**
+ * Start a Bladeburner task from lib/sleeves.js. Contracts go through the sleeve-only
+ * "Take on contracts" action, which names the contract separately.
+ *
+ * @param {NS} ns
+ * @param {number} sleeveNum
+ * @param {{type: string, actionType?: string, actionName?: string}} task
+ */
+function startBladeburnerTask(ns, sleeveNum, task) {
+  if (task.type === "infiltrate") return ns.sleeve.setToBladeburnerAction(sleeveNum, "Infiltrate Synthoids");
+  if (task.actionType === "Contracts") {
+    const contract = /** @type {BladeburnerContractName} */ (task.actionName);
+    return ns.sleeve.setToBladeburnerAction(sleeveNum, "Take on contracts", contract);
+  }
+  const action = /** @type {BladeburnerActionTypeForSleeve} */ (task.actionName);
+  return ns.sleeve.setToBladeburnerAction(sleeveNum, action);
 }
 
 /**
@@ -175,6 +219,18 @@ export async function main(ns) {
     }
 
     const workReady = (s) => s.info.shock <= workShock && s.info.sync >= 100 && !needKarma;
+
+    // Bladeburner sleeves are picked first and kept off faction and company work.
+    const bladeburner = assignBladeburner(
+      sleeves.map((s) => ({
+        sleeveNum: s.sleeveNum,
+        eligible: workReady(s),
+        combat: s.info.skills.strength + s.info.skills.defense + s.info.skills.dexterity + s.info.skills.agility,
+        current: s.live?.type === "INFILTRATE" ? "infiltrate" : s.live?.type === "BLADEBURNER" ? "contracts" : null,
+      })),
+      { count: inBladeburner(ns) ? DEFAULTS.sleeveBladeburnerCount : 0 },
+    );
+    const freeToWork = (s) => workReady(s) && !bladeburner.get(s.sleeveNum);
     const rejected = [...rejectedWork.keys()];
     const gang = gangFaction(ns);
     if (gang) rejected.push(gang);
@@ -184,7 +240,7 @@ export async function main(ns) {
     const factions = assignFactions(
       sleeves.map((s) => ({
         sleeveNum: s.sleeveNum,
-        eligible: workReady(s),
+        eligible: freeToWork(s),
         current: s.live?.type === "FACTION" ? s.live.factionName : null,
       })),
       factionWorkOrder(player.factions, factionStatus),
@@ -195,7 +251,7 @@ export async function main(ns) {
     const companies = assignCompanies(
       sleeves.map((s) => ({
         sleeveNum: s.sleeveNum,
-        eligible: workReady(s) && !factions.get(s.sleeveNum),
+        eligible: freeToWork(s) && !factions.get(s.sleeveNum),
         current: s.live?.type === "COMPANY" ? s.live.companyName : null,
       })),
       sleeveCompanies(player.jobs, player.factions),
@@ -208,7 +264,7 @@ export async function main(ns) {
     const spares = assignFactions(
       sleeves.map((s) => ({
         sleeveNum: s.sleeveNum,
-        eligible: workReady(s) && !factions.get(s.sleeveNum) && !companies.get(s.sleeveNum),
+        eligible: freeToWork(s) && !factions.get(s.sleeveNum) && !companies.get(s.sleeveNum),
         current: s.live?.type === "FACTION" ? s.live.factionName : null,
       })),
       spareFactions(player.factions, factionStatus),
@@ -228,8 +284,14 @@ export async function main(ns) {
         minChance: DEFAULTS.sleeveCrimeMinChance,
         chanceOf,
       };
+      const role = bladeburner.get(i);
       const task = chooseSleeveTask(info, {
         needKarma,
+        bladeburner: role
+          ? bladeburnerTaskFor(role, role === "contracts" ? sleeveContracts(ns, i) : [], {
+              minChance: DEFAULTS.sleeveContractMinChance,
+            })
+          : null,
         faction: factions.get(i) ?? spares.get(i) ?? null,
         company: companies.get(i) ?? null,
         workShock,
@@ -276,6 +338,13 @@ export async function main(ns) {
             } catch {}
             if (started) log(ns, `Sleeve ${i}: working at ${task.company}`);
             else rejectWork(task.company);
+            break;
+          }
+          case "infiltrate":
+          case "bladeburner": {
+            const name = task.type === "infiltrate" ? "Infiltrate Synthoids" : task.actionName;
+            if (startBladeburnerTask(ns, i, task)) log(ns, `Sleeve ${i}: Bladeburner ${name}`);
+            else log(ns, `Sleeve ${i}: Bladeburner refused ${name}`);
             break;
           }
           case "crime":

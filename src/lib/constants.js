@@ -138,6 +138,13 @@ export const DEFAULTS = {
   // sleeve on Homicide at ~1%. Lower it to reach Homicide sooner (0.5 needs ~98 in each
   // combat stat) at the price of more failed attempts.
   sleeveCrimeMinChance: 0.5,
+  // Sleeves on Bladeburner work once the player is in the division: one infiltrates
+  // Synthoids, the rest take on contracts (see assignBladeburner in lib/sleeves.js). Each is
+  // a sleeve off faction work, so 0 turns it off.
+  sleeveBladeburnerCount: 3,
+  // A sleeve only takes a contract it lands at least this often, on the low end of the
+  // game's estimate; below that it runs Field Analysis, which narrows the estimate.
+  sleeveContractMinChance: 0.8,
   // Gang equipment per 10 s cycle, across the whole roster. Without a cap every member
   // tested every item against the same start-of-cycle cash figure, so one cycle could
   // spend many multiples of it. Each item must also cost under 1% of cash.

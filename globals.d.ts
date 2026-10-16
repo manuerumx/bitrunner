@@ -23,6 +23,8 @@ declare global {
   type HacknetServerHashUpgrade = Parameters<NS["hacknet"]["spendHashes"]>[0];
   type GoOpponent = Parameters<NS["go"]["resetBoardState"]>[0];
   type BladeburnerCityName = Parameters<NS["bladeburner"]["switchCity"]>[0];
+  type BladeburnerActionTypeForSleeve = Parameters<NS["sleeve"]["setToBladeburnerAction"]>[1];
+  type BladeburnerContractName = Parameters<NS["sleeve"]["setToBladeburnerAction"]>[2];
   // Darkweb program filenames. The game validates these strictly — purchaseProgram takes
   // the literal union, not `string`, so PROGRAMS in constants.js must be typed against it.
   type ProgramName = Parameters<NS["singularity"]["purchaseProgram"]>[0];

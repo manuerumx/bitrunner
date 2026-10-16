@@ -11,6 +11,8 @@ import {
   spareFactions,
   needsKarma,
   canBuySleeveAugs,
+  assignBladeburner,
+  bladeburnerTaskFor,
 } from "/src/lib/sleeves.js";
 import { FACTION_WORK_TYPES, betterFactionWorkTypes } from "/src/lib/faction-work.js";
 
@@ -377,4 +379,112 @@ test("needsKarma is true only while a gang is possible, absent, and karma is sho
 test("canBuySleeveAugs requires zero shock", () => {
   assert.equal(canBuySleeveAugs({ shock: 0 }), true);
   assert.equal(canBuySleeveAugs({ shock: 0.5 }), false);
+});
+
+// ── Bladeburner ─────────────────────────────────────────────────────────────
+//
+// In a Bladeburner BitNode the sleeves used to ignore the division entirely. Infiltrating
+// Synthoids refills the contract and operation counts the player draws from, and a sleeve
+// on contracts earns rank alongside the player.
+
+test("needsReassignment is false when the sleeve already infiltrates Synthoids", () => {
+  assert.equal(needsReassignment({ type: "INFILTRATE" }, { type: "infiltrate" }), false);
+});
+
+test("needsReassignment is false when the sleeve already runs the desired contract", () => {
+  const live = { type: "BLADEBURNER", actionType: "Contracts", actionName: "Tracking" };
+  const want = { type: "bladeburner", actionType: "Contracts", actionName: "Tracking" };
+  assert.equal(needsReassignment(live, want), false);
+});
+
+test("needsReassignment is true when the sleeve runs a different Bladeburner action", () => {
+  const live = { type: "BLADEBURNER", actionType: "General", actionName: "Field Analysis" };
+  const want = { type: "bladeburner", actionType: "Contracts", actionName: "Tracking" };
+  assert.equal(needsReassignment(live, want), true);
+});
+
+function bbSleeve(sleeveNum, combat, current = null, eligible = true) {
+  return { sleeveNum, eligible, combat, current };
+}
+
+test("assignBladeburner sends nobody when the count is zero", () => {
+  const roles = assignBladeburner([bbSleeve(0, 100), bbSleeve(1, 200)], { count: 0 });
+  assert.deepEqual([...roles.values()], [null, null]);
+});
+
+// Contracts succeed on combat stats; infiltration doesn't need them, so the weakest of the
+// chosen sleeves infiltrates and the strongest take contracts.
+test("assignBladeburner picks the strongest sleeves and has the weakest of them infiltrate", () => {
+  const sleeves = [bbSleeve(0, 100), bbSleeve(1, 400), bbSleeve(2, 300), bbSleeve(3, 200)];
+  const roles = assignBladeburner(sleeves, { count: 3 });
+  assert.equal(roles.get(0), null);
+  assert.equal(roles.get(1), "contracts");
+  assert.equal(roles.get(2), "contracts");
+  assert.equal(roles.get(3), "infiltrate");
+});
+
+test("assignBladeburner skips ineligible sleeves", () => {
+  const sleeves = [bbSleeve(0, 900, null, false), bbSleeve(1, 100)];
+  const roles = assignBladeburner(sleeves, { count: 1 });
+  assert.equal(roles.get(0), null);
+  assert.equal(roles.get(1), "infiltrate");
+});
+
+// Moving a sleeve restarts its action, so one already on Bladeburner work keeps its place
+// and its role even when a stronger sleeve is free.
+test("assignBladeburner keeps sleeves already on Bladeburner work in their roles", () => {
+  const sleeves = [bbSleeve(0, 900), bbSleeve(1, 100, "contracts"), bbSleeve(2, 500, "infiltrate")];
+  const roles = assignBladeburner(sleeves, { count: 2 });
+  assert.equal(roles.get(0), null);
+  assert.equal(roles.get(1), "contracts");
+  assert.equal(roles.get(2), "infiltrate");
+});
+
+test("bladeburnerTaskFor infiltrates for the infiltrate role", () => {
+  assert.deepEqual(bladeburnerTaskFor("infiltrate", [], { minChance: 0.8 }), { type: "infiltrate" });
+});
+
+test("bladeburnerTaskFor takes the best-paying contract the sleeve can land", () => {
+  const contracts = [
+    { name: "Tracking", chance: 0.99, count: 10 },
+    { name: "Bounty Hunter", chance: 0.85, count: 10 },
+    { name: "Retirement", chance: 0.5, count: 10 },
+  ];
+  assert.deepEqual(bladeburnerTaskFor("contracts", contracts, { minChance: 0.8 }), {
+    type: "bladeburner",
+    actionType: "Contracts",
+    actionName: "Bounty Hunter",
+  });
+});
+
+test("bladeburnerTaskFor skips a contract with none left", () => {
+  const contracts = [
+    { name: "Tracking", chance: 0.99, count: 3 },
+    { name: "Retirement", chance: 0.99, count: 0 },
+  ];
+  assert.equal(bladeburnerTaskFor("contracts", contracts, { minChance: 0.8 }).actionName, "Tracking");
+});
+
+// Field Analysis sharpens the success estimates, which is what keeps every chance below the
+// floor early on.
+test("bladeburnerTaskFor falls back to Field Analysis when no contract clears the floor", () => {
+  const contracts = [{ name: "Tracking", chance: 0.4, count: 10 }];
+  assert.deepEqual(bladeburnerTaskFor("contracts", contracts, { minChance: 0.8 }), {
+    type: "bladeburner",
+    actionType: "General",
+    actionName: "Field Analysis",
+  });
+});
+
+test("chooseSleeveTask runs the Bladeburner task ahead of faction work", () => {
+  const sleeve = { shock: 0, sync: 100, skills };
+  const bladeburner = { type: "infiltrate" };
+  const ctx = { needKarma: false, faction: "CyberSec", workShock: 0, bladeburner };
+  assert.deepEqual(chooseSleeveTask(sleeve, ctx), { type: "infiltrate" });
+});
+
+test("chooseSleeveTask still farms karma ahead of Bladeburner work", () => {
+  const sleeve = { shock: 0, sync: 100, skills };
+  const ctx = { needKarma: true, faction: null, workShock: 0, bladeburner: { type: "infiltrate" } };
+  assert.equal(chooseSleeveTask(sleeve, ctx).type, "crime");
 });

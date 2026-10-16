@@ -27,7 +27,16 @@ const TASK_MATCHERS = {
     live.factionName === want.faction &&
     want.workTypes.includes(live.factionWorkType),
   company: (live, want) => live.type === "COMPANY" && live.companyName === want.company,
+  infiltrate: (live) => live.type === "INFILTRATE",
+  bladeburner: (live, want) =>
+    live.type === "BLADEBURNER" &&
+    live.actionType === want.actionType &&
+    live.actionName === want.actionName,
 };
+
+// Bladeburner contracts, best-paying first. Rank and money rise down the game's list
+// (Tracking, Bounty Hunter, Retirement), and so does difficulty.
+const CONTRACTS_BY_REWARD = ["Retirement", "Bounty Hunter", "Tracking"];
 
 /**
  * Does this sleeve need a new assignment, or is it already doing what we want?
@@ -117,6 +126,55 @@ export function chooseSleeveCrime(
 }
 
 /**
+ * Which sleeves work Bladeburner, and as what.
+ *
+ * Up to `count` eligible sleeves. One infiltrates Synthoids, which refills the contract
+ * and operation counts the player draws from; the rest take on contracts, which earns
+ * rank. Contracts succeed on combat stats and infiltration doesn't need them, so the
+ * strongest sleeves are chosen and the weakest of them infiltrates. A sleeve already on
+ * Bladeburner work keeps its place and role, since moving it restarts its action.
+ *
+ * @param {Array<{sleeveNum: number, eligible: boolean, combat: number,
+ *   current: "infiltrate" | "contracts" | null}>} sleeves
+ * @param {{count: number}} opts
+ * @returns {Map<number, "infiltrate" | "contracts" | null>}
+ */
+export function assignBladeburner(sleeves, { count }) {
+  /** @type {Map<number, "infiltrate" | "contracts" | null>} */
+  const result = new Map(sleeves.map((s) => [s.sleeveNum, null]));
+  const chosen = sleeves
+    .filter((s) => s.eligible)
+    .sort((a, b) => Number(Boolean(b.current)) - Number(Boolean(a.current)) || b.combat - a.combat)
+    .slice(0, Math.max(0, count));
+  if (chosen.length === 0) return result;
+
+  const weakest = [...chosen].sort((a, b) => a.combat - b.combat)[0];
+  const infiltrator = chosen.find((s) => s.current === "infiltrate") ?? weakest;
+  for (const s of chosen) result.set(s.sleeveNum, s === infiltrator ? "infiltrate" : "contracts");
+  return result;
+}
+
+/**
+ * The task for a sleeve in a Bladeburner role.
+ *
+ * A contracts sleeve takes the best-paying contract it lands at least minChance of the
+ * time (judged on the low end of the game's estimate) that still has some left. With none,
+ * it runs Field Analysis: the estimates start out wide, which is what holds every contract
+ * below the floor early on, and Field Analysis narrows them.
+ *
+ * @param {"infiltrate" | "contracts"} role
+ * @param {Array<{name: string, chance: number, count: number}>} contracts
+ * @param {{minChance: number}} opts
+ */
+export function bladeburnerTaskFor(role, contracts, { minChance }) {
+  if (role === "infiltrate") return { type: "infiltrate" };
+  const landable = contracts.filter((c) => c.count >= 1 && c.chance >= minChance).map((c) => c.name);
+  const contract = CONTRACTS_BY_REWARD.find((name) => landable.includes(name)) ?? landable[0];
+  if (contract) return { type: "bladeburner", actionType: "Contracts", actionName: contract };
+  return { type: "bladeburner", actionType: "General", actionName: "Field Analysis" };
+}
+
+/**
  * What a sleeve should be doing.
  *
  * Shock recovery until shock reaches workShock (DEFAULTS.sleeveWorkShock — see there for
@@ -124,7 +182,8 @@ export function chooseSleeveCrime(
  * later, which is when sleeve augmentations become buyable. Sync comes next, because it
  * controls how much of a sleeve's exp the player also gains.
  *
- * After that: karma for a gang, then the faction assignFactions() gave this sleeve, then
+ * After that: karma for a gang, then the Bladeburner task assignBladeburner() gave this
+ * sleeve (see bladeburnerTaskFor), then the faction assignFactions() gave it, then
  * the company assignCompanies() gave it, then a money crime. Faction work outranks company
  * work because faction rep buys augmentations now, while company rep only unlocks a
  * faction to grind later.
@@ -132,16 +191,23 @@ export function chooseSleeveCrime(
  * @param {{shock: number, sync: number, skills: any,
  *   mults?: {crime_success?: number}}} sleeve
  * @param {{needKarma: boolean, faction: string | null, company?: string | null,
+ *   bladeburner?: {type: string, actionType?: string, actionName?: string} | null,
  *   workShock: number, currentCrime?: string | null, minChance?: number,
  *   chanceOf?: (person: any, crime: CrimeType) => number}} ctx
  */
 export function chooseSleeveTask(sleeve, ctx) {
-  const { needKarma, faction, company = null, workShock, currentCrime, minChance, chanceOf } = ctx;
+  const { needKarma, faction, company = null, bladeburner = null, workShock, currentCrime, minChance, chanceOf } =
+    ctx;
   const crime = (goal) => chooseSleeveCrime(sleeve, { goal, currentCrime, minChance, chanceOf });
 
   if (sleeve.shock > workShock) return { type: "recovery" };
   if (sleeve.sync < 100) return { type: "sync" };
   if (needKarma) return { type: "crime", crime: crime("karma") };
+  // Rebuilt as literals so the result types as one task shape alongside the others.
+  if (bladeburner?.type === "infiltrate") return { type: "infiltrate" };
+  if (bladeburner) {
+    return { type: "bladeburner", actionType: bladeburner.actionType, actionName: bladeburner.actionName };
+  }
   if (faction) return { type: "faction", faction, workTypes: FACTION_WORK_TYPES };
   if (company) return { type: "company", company };
   return { type: "crime", crime: crime("money") };
