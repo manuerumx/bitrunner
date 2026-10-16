@@ -3,7 +3,7 @@ import { scanNetwork } from "/src/lib/scanner.js";
 import { PORTS } from "/src/lib/constants.js";
 import { writePortData } from "/src/lib/port-registry.js";
 import { companiesToUnlock, companyJobField } from "/src/lib/companies.js";
-import { FACTION_WORK_TYPES, betterFactionWorkTypes } from "/src/lib/faction-work.js";
+import { FACTION_WORK_TYPES, betterFactionWorkTypes, bladeburnerHoldsPlayer } from "/src/lib/faction-work.js";
 
 // Yielded to while it runs — see the takeover guard in the work loop below.
 const CRIME_WORKER = "/src/tools/crime-worker.js";
@@ -51,6 +51,16 @@ function hasSingularity(ns) {
     return true;
   } catch {
     return false;
+  }
+}
+
+// The running Bladeburner action, or null — also when the API is locked or the division not
+// joined, since every ns.bladeburner call but inBladeburner() throws then.
+function getBladeburnerAction(ns) {
+  try {
+    return ns.bladeburner.inBladeburner() ? ns.bladeburner.getCurrentAction() : null;
+  } catch {
+    return null;
   }
 }
 
@@ -166,7 +176,7 @@ export async function main(ns) {
 
     const currentWork = ns.singularity.getCurrentWork();
     // Computed before the yield below: sleeves keep working factions while the player
-    // grafts or runs the crime loop.
+    // grafts, runs the crime loop or works Bladeburner.
     let pendingFactions = getPendingFactions(ns).filter((f) => !unworkable.has(f));
 
     // Never interrupt a graft. tools/grafting.js buys augmentations with money instead of
@@ -180,7 +190,16 @@ export async function main(ns) {
     // currentWork.type === "CRIME", for two reasons: a crime the player started by hand
     // should not silently mute the rep grind forever, and killing the worker must hand the
     // player straight back — which it does, on this manager's next cycle.
-    if ((currentWork && currentWork.type === "GRAFTING") || crimeLoopRunning(ns)) {
+    //
+    // And for Bladeburner, until The Blade's Simulacrum lets both run at once: see
+    // bladeburnerHoldsPlayer. Rank is the way out of BN6/7, and bladeburner-manager.js
+    // keeps the player on an action whenever it is in the division.
+    const bladeburnerAction = getBladeburnerAction(ns);
+    if (
+      (currentWork && currentWork.type === "GRAFTING") ||
+      crimeLoopRunning(ns) ||
+      bladeburnerHoldsPlayer(bladeburnerAction, ns.singularity.getOwnedAugmentations(false))
+    ) {
       /** @type {FactionStatus} */
       const status = { currentFaction: null, rep: 0, targetRep: 0, availableAugs: 0, pendingFactions };
       writePortData(ns, PORTS.FACTION_STATUS, status);

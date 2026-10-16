@@ -26,3 +26,22 @@ export function betterFactionWorkTypes(current) {
   const rank = FACTION_WORK_TYPES.indexOf(/** @type {FactionWorkType} */ (current));
   return rank < 0 ? [...FACTION_WORK_TYPES] : FACTION_WORK_TYPES.slice(0, rank);
 }
+
+/** Lets Bladeburner actions run alongside other work. */
+export const BLADES_SIMULACRUM = "The Blade's Simulacrum";
+
+/**
+ * Is a Bladeburner action holding the player, so that faction work would cancel it?
+ *
+ * getCurrentWork() never reports a Bladeburner action, so to faction-manager.js the player
+ * looked idle and got put back on faction work every 30 s. Without The Blade's Simulacrum
+ * the two can't run together: each manager cancelled the other's work, and Bladeburner
+ * actions longer than 30 s never finished.
+ *
+ * @param {{type: string, name: string} | null} action  ns.bladeburner.getCurrentAction()
+ * @param {string[]} installedAugs  ns.singularity.getOwnedAugmentations(false)
+ */
+export function bladeburnerHoldsPlayer(action, installedAugs) {
+  if (!action || action.type === "Idle") return false;
+  return !installedAugs.includes(BLADES_SIMULACRUM);
+}

@@ -6,6 +6,7 @@ import {
   shouldSwitchCity,
   teamSizeFor,
 } from "/src/advanced/bladeburner-manager.js";
+import { bladeburnerHoldsPlayer } from "/src/lib/faction-work.js";
 
 function makeNs(cities) {
   return {
@@ -107,4 +108,26 @@ test("teamSizeFor sends nobody on General actions", () => {
 
 test("teamSizeFor cannot send more members than exist", () => {
   assert.equal(teamSizeFor("Operations", 0), 0);
+});
+
+// ── bladeburnerHoldsPlayer ──────────────────────────────────────────────────
+//
+// faction-manager.js restarts faction work every 30 s when getCurrentWork() looks idle, and
+// getCurrentWork() never reports a Bladeburner action. Without The Blade's Simulacrum the
+// two can't run together, so each cancelled the other and Bladeburner actions kept losing
+// their progress.
+
+test("bladeburnerHoldsPlayer is true while a Bladeburner action runs", () => {
+  assert.equal(bladeburnerHoldsPlayer({ type: "Contracts", name: "Tracking" }, []), true);
+});
+
+test("bladeburnerHoldsPlayer is false with no Bladeburner action", () => {
+  assert.equal(bladeburnerHoldsPlayer(null, []), false);
+  assert.equal(bladeburnerHoldsPlayer({ type: "Idle", name: "Idle" }, []), false);
+});
+
+// The Blade's Simulacrum lets Bladeburner actions run alongside other work.
+test("bladeburnerHoldsPlayer is false once The Blade's Simulacrum is installed", () => {
+  const action = { type: "Operations", name: "Investigation" };
+  assert.equal(bladeburnerHoldsPlayer(action, ["The Blade's Simulacrum"]), false);
 });
