@@ -407,7 +407,7 @@ export async function main(ns) {
     if (cfg.xpFarmRAM) {
       const xpTarget = selectXPTarget(ns);
       if (xpTarget) {
-        const xpRam = ns.getScriptRam("/src/xp.js") || WORKER_RAM.GROW;
+        const xpRam = ns.getScriptRam("/src/xp.js") || WORKER_RAM.WEAKEN;
         for (const server of workerServers) {
           if (server.freeRAM < xpRam) continue;
           if (!ns.fileExists("/src/xp.js", server.hostname)) deployWorkers(ns, server.hostname);

@@ -22,7 +22,7 @@ export async function main(ns) {
   writePortData(ns, PORTS.CONFIG_OVERRIDES, { ...overrides, xpFarmRAM: on });
   ns.tprint(
     `xp-farm: ${on ? "ON" : "OFF"} — hack-coordinator will ` +
-      `${on ? "soak surplus RAM (home + botnet) with grow-spam for hacking EXP, overriding share()" : "stop the EXP farm (share() resumes if grinding a faction)"} ` +
+      `${on ? "soak surplus RAM (home + botnet) with weaken-spam for hacking EXP, overriding share()" : "stop the EXP farm (share() resumes if grinding a faction)"} ` +
       `(takes effect next cycle).`
   );
 }
