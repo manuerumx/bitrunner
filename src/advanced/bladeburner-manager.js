@@ -1,6 +1,7 @@
 import { log } from "/src/lib/utils.js";
 import { PORTS } from "/src/lib/constants.js";
 import { writePortData } from "/src/lib/port-registry.js";
+import { CONTRACTS_BY_REWARD, OPERATIONS_BY_REWARD, bestPayingAction } from "/src/lib/bladeburner.js";
 
 // The six cities a Bladeburner division operates in. There is no getCityNames() in the API,
 // so the list is spelled out; switchCity validates it strictly at runtime.
@@ -22,6 +23,28 @@ const TEAM_ACTIONS = ["Operations", "Black Operations"];
 // action time, so a near-tie is not worth acting on — without a margin the manager would
 // ping-pong between two comparable cities every cycle.
 const CITY_SWITCH_MARGIN = 1.25;
+
+// A success estimate wider than this (max − min) is worth narrowing with Field Analysis
+// before falling back to Training.
+const ESTIMATE_SPREAD_LIMIT = 0.1;
+
+/**
+ * What to do when no action clears its success floor.
+ *
+ * Every action is judged on the low end of the game's estimate, and right after joining
+ * that estimate is wide ("40.6% ~ 100.0%"), so nothing qualified and the manager trained
+ * for hours. The width is the game's uncertainty about the city's population, which Field
+ * Analysis narrows and Training doesn't. Once every estimate is narrow and still short, the
+ * stats are what's lacking, and Training raises them.
+ *
+ * @param {Array<[number, number]>} estimates  [min, max] success chance per contract and
+ *   operation with any count left
+ * @returns {{ type: BladeburnerActionType, name: BladeburnerActionName }}
+ */
+export function fallbackAction(estimates) {
+  const wide = estimates.some(([min, max]) => max - min > ESTIMATE_SPREAD_LIMIT);
+  return wide ? { type: "General", name: "Field Analysis" } : { type: "General", name: "Training" };
+}
 
 function hasBladeburnerAPI(ns) {
   try {
@@ -110,33 +133,28 @@ function getBestAction(ns) {
     if (minChance >= 0.8) return { type: "Black Operations", name: op };
   }
 
-  const operations = ns.bladeburner.getOperationNames();
-  let bestOp = null, bestOpChance = 0;
-  for (const op of operations) {
-    const count = ns.bladeburner.getActionCountRemaining("Operations", op);
-    if (count <= 0) continue;
-    const [minChance] = ns.bladeburner.getActionEstimatedSuccessChance("Operations", op);
-    if (minChance > bestOpChance) {
-      bestOpChance = minChance;
-      bestOp = op;
-    }
-  }
-  if (bestOp && bestOpChance >= 0.7) return { type: "Operations", name: bestOp };
+  /** @type {Array<[number, number]>} */
+  const estimates = [];
 
-  const contracts = ns.bladeburner.getContractNames();
-  let bestContract = null, bestContractChance = 0;
-  for (const contract of contracts) {
-    const count = ns.bladeburner.getActionCountRemaining("Contracts", contract);
-    if (count <= 0) continue;
-    const [minChance] = ns.bladeburner.getActionEstimatedSuccessChance("Contracts", contract);
-    if (minChance > bestContractChance) {
-      bestContractChance = minChance;
-      bestContract = contract;
+  // Each action with some count left, judged on the low end of its estimate.
+  const candidates = (type, names) => {
+    const out = [];
+    for (const name of names) {
+      if (ns.bladeburner.getActionCountRemaining(type, name) <= 0) continue;
+      const [minChance, maxChance] = ns.bladeburner.getActionEstimatedSuccessChance(type, name);
+      estimates.push([minChance, maxChance]);
+      out.push({ name, chance: minChance });
     }
-  }
-  if (bestContract && bestContractChance >= 0.6) return { type: "Contracts", name: bestContract };
+    return out;
+  };
 
-  return { type: "General", name: "Training" };
+  const op = bestPayingAction(candidates("Operations", ns.bladeburner.getOperationNames()), OPERATIONS_BY_REWARD, 0.7);
+  if (op) return { type: "Operations", name: /** @type {BladeburnerActionName} */ (op) };
+
+  const contract = bestPayingAction(candidates("Contracts", ns.bladeburner.getContractNames()), CONTRACTS_BY_REWARD, 0.6);
+  if (contract) return { type: "Contracts", name: /** @type {BladeburnerActionName} */ (contract) };
+
+  return fallbackAction(estimates);
 }
 
 function upgradeSkills(ns) {

@@ -2,11 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   BLADEBURNER_CITIES,
+  fallbackAction,
   pickBestCity,
   shouldSwitchCity,
   teamSizeFor,
 } from "/src/advanced/bladeburner-manager.js";
 import { bladeburnerHoldsPlayer } from "/src/lib/faction-work.js";
+import { CONTRACTS_BY_REWARD, OPERATIONS_BY_REWARD, bestPayingAction } from "/src/lib/bladeburner.js";
 
 function makeNs(cities) {
   return {
@@ -130,4 +132,60 @@ test("bladeburnerHoldsPlayer is false with no Bladeburner action", () => {
 test("bladeburnerHoldsPlayer is false once The Blade's Simulacrum is installed", () => {
   const action = { type: "Operations", name: "Investigation" };
   assert.equal(bladeburnerHoldsPlayer(action, ["The Blade's Simulacrum"]), false);
+});
+
+// ── fallbackAction ──────────────────────────────────────────────────────────
+//
+// The manager judges every action on the low end of the game's estimate, and right after
+// joining that estimate is wide (Tracking at "40.6% ~ 100.0%"), so nothing cleared its floor
+// and it trained for hours. The width comes from the game's uncertainty about the city's
+// population; Field Analysis narrows it, Training doesn't.
+
+test("fallbackAction runs Field Analysis while an estimate is wide", () => {
+  assert.deepEqual(fallbackAction([[0.406, 1], [0.2, 0.25]]), { type: "General", name: "Field Analysis" });
+});
+
+// A narrow estimate that still falls short means the stats are too low, which Training fixes.
+test("fallbackAction trains once every estimate is narrow", () => {
+  assert.deepEqual(fallbackAction([[0.4, 0.45], [0.2, 0.25]]), { type: "General", name: "Training" });
+});
+
+test("fallbackAction trains with nothing to estimate", () => {
+  assert.deepEqual(fallbackAction([]), { type: "General", name: "Training" });
+});
+
+// ── bestPayingAction ────────────────────────────────────────────────────────
+//
+// The manager took the action with the highest success chance, which is always the easiest
+// one, so it stayed on Tracking and Investigation however strong the player got. Rank is
+// what unlocks the Black Ops, and the harder actions pay far more of it.
+
+test("bestPayingAction takes the best-paying operation that clears the floor", () => {
+  const candidates = [
+    { name: "Investigation", chance: 1 },
+    { name: "Undercover Operation", chance: 0.95 },
+    { name: "Assassination", chance: 0.75 },
+  ];
+  assert.equal(bestPayingAction(candidates, OPERATIONS_BY_REWARD, 0.7), "Assassination");
+});
+
+test("bestPayingAction passes over a better-paying action below the floor", () => {
+  const candidates = [
+    { name: "Tracking", chance: 0.9 },
+    { name: "Retirement", chance: 0.5 },
+  ];
+  assert.equal(bestPayingAction(candidates, CONTRACTS_BY_REWARD, 0.6), "Tracking");
+});
+
+// Raid and Sting Operation raise chaos, which lowers every success chance in the city.
+test("bestPayingAction never takes an action left out of the order", () => {
+  const candidates = [
+    { name: "Raid", chance: 1 },
+    { name: "Sting Operation", chance: 1 },
+  ];
+  assert.equal(bestPayingAction(candidates, OPERATIONS_BY_REWARD, 0.7), null);
+});
+
+test("bestPayingAction returns null when nothing clears the floor", () => {
+  assert.equal(bestPayingAction([{ name: "Tracking", chance: 0.4 }], CONTRACTS_BY_REWARD, 0.6), null);
 });

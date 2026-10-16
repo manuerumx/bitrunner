@@ -10,6 +10,7 @@ import {
 } from "/src/lib/crime.js";
 
 import { FACTION_WORK_TYPES } from "/src/lib/faction-work.js";
+import { CONTRACTS_BY_REWARD, bestPayingAction } from "/src/lib/bladeburner.js";
 
 // ns.sleeve.getTask() reports the live task in the game's own vocabulary; sleeve-manager
 // picks tasks in its own. This maps our task descriptor onto the fields getTask returns,
@@ -33,10 +34,6 @@ const TASK_MATCHERS = {
     live.actionType === want.actionType &&
     live.actionName === want.actionName,
 };
-
-// Bladeburner contracts, best-paying first. Rank and money rise down the game's list
-// (Tracking, Bounty Hunter, Retirement), and so does difficulty.
-const CONTRACTS_BY_REWARD = ["Retirement", "Bounty Hunter", "Tracking"];
 
 /**
  * Does this sleeve need a new assignment, or is it already doing what we want?
@@ -168,8 +165,8 @@ export function assignBladeburner(sleeves, { count }) {
  */
 export function bladeburnerTaskFor(role, contracts, { minChance }) {
   if (role === "infiltrate") return { type: "infiltrate" };
-  const landable = contracts.filter((c) => c.count >= 1 && c.chance >= minChance).map((c) => c.name);
-  const contract = CONTRACTS_BY_REWARD.find((name) => landable.includes(name)) ?? landable[0];
+  const left = contracts.filter((c) => c.count >= 1);
+  const contract = bestPayingAction(left, CONTRACTS_BY_REWARD, minChance);
   if (contract) return { type: "bladeburner", actionType: "Contracts", actionName: contract };
   return { type: "bladeburner", actionType: "General", actionName: "Field Analysis" };
 }

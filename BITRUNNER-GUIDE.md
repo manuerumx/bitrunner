@@ -359,6 +359,17 @@ These require specific Source Files or BitNode conditions. Each checks for API a
   formula) and it moves when another city beats the current one by 1.25×. The margin stops it
   ping-ponging between two comparable cities every 5 s, since each switch costs action time.
   Before this it only ever ran Diplomacy in place, grinding one city down instead of leaving.
+- **It narrows wide estimates before training.** Every action is judged on the low end of the
+  game's success estimate, which is wide right after joining (Tracking at "40.6% ~ 100.0%"),
+  so nothing qualified and it trained for hours. When nothing clears its floor and any
+  contract or operation estimate is more than 10 points wide, it runs Field Analysis, which
+  narrows them; it trains only once they're narrow and still too low.
+- **It takes the best-paying action it can land**, not the likeliest. Picking the highest
+  chance always meant the easiest action, so it stayed on Tracking and Investigation however
+  strong the player got. Operations (at 70%) go Assassination, Stealth Retirement,
+  Undercover, Investigation; contracts (at 60%) go Retirement, Bounty Hunter, Tracking. Raid
+  and Sting Operation are never taken, since both raise chaos. The orders live in
+  `lib/bladeburner.js`, which the sleeves share.
 - **It brings the team.** `setTeamSize` commits the squad on Operations and Black Ops, where team
   members raise success chance; Contracts and General actions are solo and get nobody.
 
