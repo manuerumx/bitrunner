@@ -14,6 +14,7 @@ declare global {
   // derive them from the NS method signatures that consume them.
   type BladeburnerActionType = Parameters<NS["bladeburner"]["startAction"]>[0];
   type BladeburnerActionName = Parameters<NS["bladeburner"]["startAction"]>[1];
+  type BladeburnerSkillName = Parameters<NS["bladeburner"]["upgradeSkill"]>[0];
   type FactionWorkType = Parameters<NS["sleeve"]["setToFactionWork"]>[2];
   type FactionName = Parameters<NS["sleeve"]["setToFactionWork"]>[1];
   type GymType = Parameters<NS["sleeve"]["setToGymWorkout"]>[2];

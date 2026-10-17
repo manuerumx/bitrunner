@@ -28,22 +28,84 @@ const CITY_SWITCH_MARGIN = 1.25;
 // before falling back to Training.
 const ESTIMATE_SPREAD_LIMIT = 0.1;
 
+// Recruit up to this many team members. Team size lifts Operation and Black Op success with
+// steep diminishing returns, and recruiting only trains charisma, so past this point idle
+// time is better spent on Training.
+export const TEAM_TARGET = 10;
+
+// A failed recruitment costs the whole action time; below this, Training is the better use.
+export const RECRUIT_MIN_CHANCE = 0.5;
+
 /**
  * What to do when no action clears its success floor.
  *
  * Every action is judged on the low end of the game's estimate, and right after joining
  * that estimate is wide ("40.6% ~ 100.0%"), so nothing qualified and the manager trained
  * for hours. The width is the game's uncertainty about the city's population, which Field
- * Analysis narrows and Training doesn't. Once every estimate is narrow and still short, the
- * stats are what's lacking, and Training raises them.
+ * Analysis narrows and Training doesn't. Once every estimate is narrow and still short,
+ * the idle time builds the team while it is small, then goes to Training for the stats.
  *
  * @param {Array<[number, number]>} estimates  [min, max] success chance per contract and
  *   operation with any count left
+ * @param {{teamSize?: number, recruitChance?: number}} [recruit]  current team size and the
+ *   low end of Recruitment's success estimate
  * @returns {{ type: BladeburnerActionType, name: BladeburnerActionName }}
  */
-export function fallbackAction(estimates) {
+export function fallbackAction(estimates, { teamSize = 0, recruitChance = 0 } = {}) {
   const wide = estimates.some(([min, max]) => max - min > ESTIMATE_SPREAD_LIMIT);
-  return wide ? { type: "General", name: "Field Analysis" } : { type: "General", name: "Training" };
+  if (wide) return { type: "General", name: "Field Analysis" };
+  if (teamSize < TEAM_TARGET && recruitChance >= RECRUIT_MIN_CHANCE) {
+    return { type: "General", name: "Recruitment" };
+  }
+  return { type: "General", name: "Training" };
+}
+
+/**
+ * How much a level of each skill is worth, relative to the others.
+ *
+ * Success chance across the board comes first (Blade's Intuition), then Operations, which pay
+ * the rank (Digital Observer), and speed on everything (Overclock). Stats and contracts follow.
+ * Cloak and Short-Circuit only help a few actions each, and money and Field Analysis matter
+ * least here.
+ * @type {Record<BladeburnerSkillName, number>}
+ */
+export const SKILL_WEIGHTS = {
+  "Blade's Intuition": 4, // +3% success, every action
+  "Digital Observer": 3, // +4% success, Operations and Black Ops
+  Overclock: 3, // −1% action time, caps at 90
+  Reaper: 2, // +2% combat stats
+  "Evasive System": 2, // +4% dexterity and agility
+  Tracer: 2, // +4% success, Contracts
+  Hyperdrive: 2, // +10% Bladeburner experience
+  Cloak: 1.5, // +5.5% success, stealth actions
+  "Short-Circuit": 1.5, // +5.5% success, retirement actions
+  "Cyber's Edge": 1, // +2% max stamina
+  Datamancer: 0.5, // +5% Field Analysis effectiveness
+  "Hands of Midas": 0.5, // +10% contract money
+};
+
+/**
+ * The skill to level next, or null to keep saving.
+ *
+ * Picks the best weight per point among skills that can still level, and waits until it is
+ * affordable rather than spend on a worse one.
+ *
+ * @param {Partial<Record<string, number>>} costs  next-level cost per skill (Infinity when maxed)
+ * @param {number} points  unspent skill points
+ * @returns {string | null}
+ */
+export function pickSkill(costs, points) {
+  let best = null;
+  let bestRatio = Infinity;
+  for (const [name, cost] of Object.entries(costs)) {
+    const weight = SKILL_WEIGHTS[name] ?? 0;
+    if (!(weight > 0 && cost > 0 && Number.isFinite(cost))) continue;
+    if (cost / weight < bestRatio) {
+      best = name;
+      bestRatio = cost / weight;
+    }
+  }
+  return best !== null && costs[best] <= points ? best : null;
 }
 
 function hasBladeburnerAPI(ns) {
@@ -154,24 +216,22 @@ function getBestAction(ns) {
   const contract = bestPayingAction(candidates("Contracts", ns.bladeburner.getContractNames()), CONTRACTS_BY_REWARD, 0.6);
   if (contract) return { type: "Contracts", name: /** @type {BladeburnerActionName} */ (contract) };
 
-  return fallbackAction(estimates);
+  const [recruitChance] = ns.bladeburner.getActionEstimatedSuccessChance("General", "Recruitment");
+  return fallbackAction(estimates, { teamSize: ns.bladeburner.getTeamSize(), recruitChance });
 }
 
 function upgradeSkills(ns) {
-  const skills = ns.bladeburner.getSkillNames();
   let points = ns.bladeburner.getSkillPoints();
-
-  const priorities = ["Blade's Intuition", "Cloak", "Short-Circuit", "Digital Observer", "Overclock"];
-
-  // Buy one level of each priority skill we can afford, in order, decrementing
-  // the available skill points as we go. Skill points are small integers, so the
-  // old `cost <= points * 0.3` reserve blocked nearly every upgrade.
-  for (const skill of priorities) {
-    if (!skills.includes(skill)) continue;
-    const cost = ns.bladeburner.getSkillUpgradeCost(skill);
-    if (cost > 0 && cost <= points && ns.bladeburner.upgradeSkill(skill)) {
-      points -= cost;
+  while (true) {
+    /** @type {Partial<Record<string, number>>} */
+    const costs = {};
+    for (const skill of ns.bladeburner.getSkillNames()) {
+      costs[skill] = ns.bladeburner.getSkillUpgradeCost(skill);
     }
+    const skill = /** @type {BladeburnerSkillName | null} */ (pickSkill(costs, points));
+    if (!skill || !ns.bladeburner.upgradeSkill(skill)) return;
+    log(ns, `Bladeburner: upgraded ${skill} (${costs[skill]} SP)`);
+    points -= costs[skill];
   }
 }
 

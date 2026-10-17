@@ -2,7 +2,11 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   BLADEBURNER_CITIES,
+  RECRUIT_MIN_CHANCE,
+  SKILL_WEIGHTS,
+  TEAM_TARGET,
   fallbackAction,
+  pickSkill,
   pickBestCity,
   shouldSwitchCity,
   teamSizeFor,
@@ -152,6 +156,67 @@ test("fallbackAction trains once every estimate is narrow", () => {
 
 test("fallbackAction trains with nothing to estimate", () => {
   assert.deepEqual(fallbackAction([]), { type: "General", name: "Training" });
+});
+
+// Nothing ever ran Recruitment, so the team stayed at whatever was recruited by hand, and
+// members lost on failed operations were never replaced. Team size raises the success chance
+// of Operations and Black Ops; idle time is when we can afford to build it.
+
+test("fallbackAction recruits while the team is short and recruiting would land", () => {
+  const recruit = { teamSize: TEAM_TARGET - 1, recruitChance: RECRUIT_MIN_CHANCE };
+  assert.deepEqual(fallbackAction([[0.4, 0.45]], recruit), { type: "General", name: "Recruitment" });
+});
+
+// Recruitment only adds charisma; a full team that still can't land anything needs stats.
+test("fallbackAction trains once the team is full", () => {
+  const recruit = { teamSize: TEAM_TARGET, recruitChance: 1 };
+  assert.deepEqual(fallbackAction([[0.4, 0.45]], recruit), { type: "General", name: "Training" });
+});
+
+test("fallbackAction trains while recruiting would mostly fail", () => {
+  const recruit = { teamSize: 0, recruitChance: RECRUIT_MIN_CHANCE - 0.01 };
+  assert.deepEqual(fallbackAction([[0.4, 0.45]], recruit), { type: "General", name: "Training" });
+});
+
+test("fallbackAction narrows a wide estimate before recruiting", () => {
+  const recruit = { teamSize: 0, recruitChance: 1 };
+  assert.deepEqual(fallbackAction([[0.4, 1]], recruit), { type: "General", name: "Field Analysis" });
+});
+
+// ── pickSkill ───────────────────────────────────────────────────────────────
+//
+// The manager bought one level of each of five skills per cycle, whatever it could afford.
+// It never saved up, so once Blade's Intuition got expensive the points went to the cheapest
+// skill on the list, and seven skills were never bought at all. Now every skill has a weight
+// and the best value per point wins, even if that means waiting for more points.
+
+test("pickSkill takes the most valuable skill at equal cost", () => {
+  assert.equal(pickSkill({ "Blade's Intuition": 4, Cloak: 4 }, 10), "Blade's Intuition");
+});
+
+test("pickSkill moves on once the favourite gets expensive", () => {
+  assert.equal(pickSkill({ "Blade's Intuition": 40, Cloak: 4 }, 40), "Cloak");
+});
+
+test("pickSkill saves up rather than spend on a worse skill", () => {
+  assert.equal(pickSkill({ "Blade's Intuition": 5, Cloak: 4 }, 4), null);
+});
+
+// getSkillUpgradeCost returns Infinity past a skill's max level (Overclock caps at 90).
+test("pickSkill skips a maxed skill", () => {
+  assert.equal(pickSkill({ Overclock: Infinity, Cloak: 4 }, 4), "Cloak");
+});
+
+test("pickSkill returns null with nothing to buy", () => {
+  assert.equal(pickSkill({}, 100), null);
+});
+
+test("SKILL_WEIGHTS covers every Bladeburner skill", () => {
+  const all = [
+    "Blade's Intuition", "Cloak", "Short-Circuit", "Digital Observer", "Tracer", "Overclock",
+    "Reaper", "Evasive System", "Datamancer", "Cyber's Edge", "Hands of Midas", "Hyperdrive",
+  ];
+  assert.deepEqual(Object.keys(SKILL_WEIGHTS).sort(), all.sort());
 });
 
 // ── bestPayingAction ────────────────────────────────────────────────────────
