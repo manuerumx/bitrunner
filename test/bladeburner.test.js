@@ -5,7 +5,10 @@ import {
   RECRUIT_MIN_CHANCE,
   SKILL_WEIGHTS,
   TEAM_TARGET,
+  REGEN_START,
+  REGEN_STOP,
   fallbackAction,
+  needsRegen,
   pickSkill,
   pickBestCity,
   shouldSwitchCity,
@@ -253,4 +256,27 @@ test("bestPayingAction never takes an action left out of the order", () => {
 
 test("bestPayingAction returns null when nothing clears the floor", () => {
   assert.equal(bestPayingAction([{ name: "Tracking", chance: 0.4 }], CONTRACTS_BY_REWARD, 0.6), null);
+});
+
+// ── needsRegen ──────────────────────────────────────────────────────────────
+//
+// A failed contract or operation costs HP, and at zero the game hospitalizes you and charges
+// $100k per missing HP (68 trips, $359m early in a run). The Regeneration Chamber is free but
+// slow (2 HP per 60 s), so it starts low and runs until HP has a cushion again, otherwise the
+// next failure lands straight back in hospital.
+
+test("needsRegen starts once HP falls to the threshold", () => {
+  assert.equal(needsRegen({ current: REGEN_START * 100, max: 100 }, false), true);
+});
+
+test("needsRegen leaves a healthy player working", () => {
+  assert.equal(needsRegen({ current: REGEN_START * 100 + 1, max: 100 }, false), false);
+});
+
+test("needsRegen keeps regenerating until HP has a cushion", () => {
+  assert.equal(needsRegen({ current: REGEN_STOP * 100 - 1, max: 100 }, true), true);
+});
+
+test("needsRegen stops once HP is back to the cushion", () => {
+  assert.equal(needsRegen({ current: REGEN_STOP * 100, max: 100 }, true), false);
 });

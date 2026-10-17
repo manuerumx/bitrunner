@@ -28,6 +28,23 @@ const CITY_SWITCH_MARGIN = 1.25;
 // before falling back to Training.
 const ESTIMATE_SPREAD_LIMIT = 0.1;
 
+// HP fractions bracketing a stay in the Regeneration Chamber. A failed contract or operation
+// costs HP, and at zero the game hospitalizes you for $100k per missing HP. The chamber is
+// free but heals only 2 HP per 60 s, so it starts late and stops with a cushion; stopping
+// at the start line would send the next failure straight to hospital.
+export const REGEN_START = 0.2;
+export const REGEN_STOP = 0.5;
+
+/**
+ * Should the player be in (or stay in) the Regeneration Chamber?
+ * @param {{current: number, max: number}} hp
+ * @param {boolean} regenerating  whether the chamber is the current action
+ */
+export function needsRegen(hp, regenerating) {
+  const ratio = hp.current / hp.max;
+  return regenerating ? ratio < REGEN_STOP : ratio <= REGEN_START;
+}
+
 // Recruit up to this many team members. Team size lifts Operation and Black Op success with
 // steep diminishing returns, and recruiting only trains charisma, so past this point idle
 // time is better spent on Training.
@@ -174,6 +191,11 @@ function getStamina(ns) {
  * @returns {{ type: BladeburnerActionType, name: BladeburnerActionName }}
  */
 function getBestAction(ns) {
+  const regenerating = ns.bladeburner.getCurrentAction()?.name === "Hyperbolic Regeneration Chamber";
+  if (needsRegen(ns.getPlayer().hp, regenerating)) {
+    return { type: "General", name: "Hyperbolic Regeneration Chamber" };
+  }
+
   const stamina = getStamina(ns);
 
   if (stamina.ratio < 0.5) return { type: "General", name: "Training" };
